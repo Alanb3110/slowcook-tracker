@@ -80,7 +80,7 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand">CuissonTracker <small>v3.2.0</small></div>
+      <div class="brand">CuissonTracker <small>v3.2.1</small></div>
       <button class="icon-btn" id="historyTopBtn" aria-label="Historique">☰</button>
     </header>
     <main id="main"></main>
@@ -98,15 +98,15 @@
   <div class="toast" id="toast"></div>
   <input id="fileInput" type="file" accept="application/json,.json" hidden>
 
-<script src="analysis.js?v=4.2.0"></script>
+<script src="analysis.js?v=4.2.1"></script>
 <script>
 'use strict';
 
-// CuissonTracker Web v3.2.0 — local phase analysis v4.2.0
+// CuissonTracker Web v3.2.1 — local phase analysis v4.2.1
 // Data schema kept compatible with the Scriptable schema v5.
 
-const APP_VERSION = '3.2.0';
-const ANALYSIS_VERSION = 'web-4.2.0';
+const APP_VERSION = '3.2.1';
+const ANALYSIS_VERSION = 'web-4.2.1';
 const SCHEMA_VERSION = 5;
 const STORAGE_KEY = 'cuissonTracker.state.v5';
 const MIN_TEMP_C = -20;
@@ -220,13 +220,13 @@ function render(){
       <div class="progress"><div style="width:${pct}%"></div></div>
     </section>
     <section class="stat-grid">
-      <div class="stat"><div class="stat-label">Tendance</div><div class="stat-value">${trendLabel(a.slope)}</div><div class="stat-detail">${Number.isFinite(a.slope)?`${a.slope>=0?'+':''}${fmtTemp(a.slope)} °C/h · ${modelLabel(a.activePhase?.model?.family)}`:'Mesures insuffisantes'}</div></div>
+      <div class="stat"><div class="stat-label">Tendance du modèle</div><div class="stat-value">${trendLabel(a.slope)}</div><div class="stat-detail">${Number.isFinite(a.slope)?`${a.slope>=0?'+':''}${fmtTemp(a.slope)} °C/h · ${modelLabel(a.activePhase?.model?.family)}`:'Mesures insuffisantes'}</div></div>
       <div class="stat"><div class="stat-label">15 min après mesure</div><div class="stat-value">${Number.isFinite(a.projection)?`${fmtTemp(a.projection)} °C`:'—'}</div><div class="stat-detail">Projection du régime actif.</div></div>
       <div class="stat"><div class="stat-label">Arrivée cible</div><div class="stat-value">${etaTitle}</div><div class="stat-detail">${etaDetail}</div></div>
       <div class="stat"><div class="stat-label">Qualité</div><div class="stat-value"><span class="quality-dot" style="background:${qualityColor(a.quality.key)}"></span>${a.quality.label}</div><div class="stat-detail">${escapeHtml(a.quality.detail)}</div></div>
     </section>
     ${a.warnings.length?`<section class="card warning" role="status">⚠ ${escapeHtml(a.warnings.join(' · '))}</section>`:''}
-    <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-legend"><span class="temp-key">Température</span><button id="velocityToggle" type="button" class="velocity-toggle ${velocityVisible?'active':''}" aria-pressed="${velocityVisible}" onclick="toggleVelocity()"><span class="velocity-key">Vitesse °C/h</span></button></div><div class="chart-wrap"><canvas id="chart" role="img" aria-label="Température du cœur et vitesse modélisée sur les phases de cuisson"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div><div class="chart-note" id="velocityNote"></div></section>
+    <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-legend"><span class="temp-key">Température</span><button id="velocityToggle" type="button" class="velocity-toggle ${velocityVisible?'active':''}" aria-pressed="${velocityVisible}" onclick="toggleVelocity()"><span class="velocity-key">Vitesse °C/h</span></button></div><div class="chart-wrap"><canvas id="chart" role="img" aria-label="Température du cœur et vitesse historique estimée entre les mesures"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div><div class="chart-note" id="velocityNote"></div></section>
     <section class="card analysis-details"><details><summary>Détails de l’analyse</summary>${analysisDetailsHtml(a)}</details></section>
     <section class="card"><div class="section-head"><div class="section-title">Dernières mesures</div><button class="section-action" onclick="openMeasurements()">Tout voir</button></div>${recentMeasurementsHtml(c)}</section>`;
   requestAnimationFrame(()=>drawChart(c,a));
@@ -240,10 +240,11 @@ function drawChart(c,a){
   const canvas=document.getElementById('chart');if(!canvas)return;const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);const w=rect.width,h=rect.height,ml=42,mb=30;let mt=12,ph=h-mt-mb;ctx.clearRect(0,0,w,h);
   const pts=a.all;if(!pts.length){ctx.fillStyle='#8e8e93';ctx.font='13px -apple-system';ctx.textAlign='center';ctx.fillText('Ajoute une mesure pour afficher la courbe',w/2,h/2);return;}
   const lastTime=pts.at(-1).timeMs,end=lastTime+(Number.isFinite(a.projection)?15*60000:0);let start=chartRangeMinutes?lastTime-chartRangeMinutes*60000:Math.min(new Date(c.startTime).getTime(),pts[0].timeMs);const visible=pts.filter(p=>p.timeMs>=start);if(visible.length===1)start=Math.min(start,visible[0].timeMs-30*60000);
-  const rateSegments=velocityVisible?TemperatureAnalysis.rateCurve(a.phases,a.acq).filter(s=>s.samples.at(-1).timeMs>=start&&s.samples[0].timeMs<=end):[];
+  const history=TemperatureAnalysis.historyCurve(a.phases,a.acq).filter(s=>s.samples.at(-1).timeMs>=start&&s.samples[0].timeMs<=end);
+  const rateSegments=velocityVisible?history.filter(s=>!s.gap&&!s.boundary&&a.phases[s.phaseIndex].points.length>=4&&a.phases[s.phaseIndex].endMs-a.phases[s.phaseIndex].startMs>=15*60000):[];
   const rateValues=rateSegments.flatMap(s=>s.samples.map(p=>p.rateCPerHour));const hasRates=rateValues.length>0;if(hasRates){mt=22;ph=h-mt-mb;}
   const mr=hasRates?49:10,pw=w-ml-mr;
-  const note=document.getElementById('velocityNote');if(note)note.textContent=!velocityVisible?'':hasRates?'Vitesse déduite des phases · pointillés : intervalle sans mesure':'Vitesse disponible après 4 mesures sur au moins 15 min dans une phase.';
+  const note=document.getElementById('velocityNote');if(note)note.textContent=!velocityVisible?'':hasRates?'Vitesse indicative entre mesures · interruptions : grands intervalles':'Vitesse disponible après 4 mesures sur au moins 15 min dans une phase.';
   // The oven setpoint is an event/context variable, not a core temperature: never let it flatten the measured curve.
   const temps=visible.map(p=>p.temperature).concat([Number(c.targetTemperature),a.projection]).filter(Number.isFinite);let ymin=Math.min(...temps),ymax=Math.max(...temps);let pad=Math.max(4,(ymax-ymin)*.14);ymin=Math.floor((ymin-pad)/5)*5;ymax=Math.ceil((ymax+pad)/5)*5;if(ymax-ymin<15)ymax=ymin+15;
   const mx=t=>ml+(t-start)/(end-start||1)*pw,my=v=>mt+(ymax-v)/(ymax-ymin)*ph;
@@ -254,10 +255,11 @@ function drawChart(c,a){
   const sp=a.setpoint;if(Number.isFinite(sp)&&sp>=ymin&&sp<=ymax){ctx.save();ctx.setLineDash([3,5]);ctx.strokeStyle='rgba(100,210,255,.6)';ctx.beginPath();ctx.moveTo(ml,my(sp));ctx.lineTo(w-mr,my(sp));ctx.stroke();ctx.restore();}
   for(const e of c.events||[]){const t=new Date(e.timestamp).getTime();if(t<start||t>end)continue;ctx.strokeStyle='rgba(191,90,242,.45)';ctx.beginPath();ctx.moveTo(mx(t),mt);ctx.lineTo(mx(t),mt+ph);ctx.stroke();}
   for(const phase of a.phases.slice(1)){if(phase.startMs<start)continue;ctx.save();ctx.setLineDash([3,5]);ctx.strokeStyle='rgba(255,159,10,.55)';ctx.beginPath();ctx.moveTo(mx(phase.startMs),mt);ctx.lineTo(mx(phase.startMs),mt+ph);ctx.stroke();ctx.restore();}
-  ctx.strokeStyle='#0a84ff';ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.lineCap='round';ctx.beginPath();visible.forEach((p,i)=>{const x=mx(p.timeMs),y=my(p.temperature);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();ctx.fillStyle='#f5f5f7';for(const p of visible){ctx.beginPath();ctx.arc(mx(p.timeMs),my(p.temperature),3.2,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#0a84ff';ctx.lineWidth=2;ctx.stroke();}
-  const active=a.activePhase?.points.filter(p=>p.timeMs>=start)||[];if(active.length>1){ctx.strokeStyle='#30d158';ctx.lineWidth=2.5;ctx.beginPath();active.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),my(p.temperature)):ctx.moveTo(mx(p.timeMs),my(p.temperature)));ctx.stroke();}
+  ctx.save();ctx.beginPath();ctx.rect(ml,mt,pw,ph);ctx.clip();ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.lineCap='round';for(const s of history){ctx.strokeStyle='#0a84ff';ctx.setLineDash(s.gap?[4,5]:[]);ctx.beginPath();s.samples.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),my(p.temperature)):ctx.moveTo(mx(p.timeMs),my(p.temperature)));ctx.stroke();}ctx.setLineDash([]);
+  for(const s of history.filter(s=>s.phaseIndex===a.phases.length-1&&!s.boundary)){ctx.strokeStyle='#30d158';ctx.setLineDash(s.gap?[4,5]:[]);ctx.beginPath();s.samples.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),my(p.temperature)):ctx.moveTo(mx(p.timeMs),my(p.temperature)));ctx.stroke();}ctx.restore();
+  ctx.fillStyle='#f5f5f7';for(const p of visible){ctx.beginPath();ctx.arc(mx(p.timeMs),my(p.temperature),3.2,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#0a84ff';ctx.lineWidth=2;ctx.stroke();}
   if(Number.isFinite(a.projection)){ctx.save();ctx.setLineDash([4,5]);ctx.strokeStyle='#30d158';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(mx(lastTime),my(pts.at(-1).temperature));ctx.lineTo(mx(lastTime+15*60000),my(a.projection));ctx.stroke();ctx.restore();}
-  if(hasRates){ctx.save();ctx.beginPath();ctx.rect(ml,mt,pw,ph);ctx.clip();ctx.strokeStyle='#64d2ff';ctx.lineWidth=2;for(const segment of rateSegments){ctx.beginPath();ctx.setLineDash(segment.gap?[3,5]:[]);segment.samples.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),ry(p.rateCPerHour)):ctx.moveTo(mx(p.timeMs),ry(p.rateCPerHour)));ctx.stroke();}ctx.setLineDash([]);const last=rateSegments.at(-1).samples.at(-1);if(last.timeMs===lastTime){ctx.fillStyle='#64d2ff';ctx.beginPath();ctx.arc(mx(last.timeMs),ry(last.rateCPerHour),3,0,Math.PI*2);ctx.fill();}ctx.restore();}
+  if(hasRates){ctx.save();ctx.beginPath();ctx.rect(ml,mt,pw,ph);ctx.clip();ctx.strokeStyle='#64d2ff';ctx.lineWidth=2;for(const segment of rateSegments){ctx.beginPath();segment.samples.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),ry(p.rateCPerHour)):ctx.moveTo(mx(p.timeMs),ry(p.rateCPerHour)));ctx.stroke();}const last=rateSegments.at(-1).samples.at(-1);if(last.timeMs===lastTime){ctx.fillStyle='#64d2ff';ctx.beginPath();ctx.arc(mx(last.timeMs),ry(last.rateCPerHour),3,0,Math.PI*2);ctx.fill();}ctx.restore();}
   chartView={start,end,ymin,ymax,rateRange:hasRates?[rmin,rmax]:null};
 }
 function setChartRange(v){chartRangeMinutes=v;render();}

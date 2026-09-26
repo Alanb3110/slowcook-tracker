@@ -1,4 +1,4 @@
-/* CuissonTracker analysis v4.2.0. Times are milliseconds, rates are °C/h.
+/* CuissonTracker analysis v4.2.1. Times are milliseconds, rates are °C/h.
  * This module has no DOM or storage dependency and also runs in Node tests.
  * @typedef {{timeMs:number,temperature:number,index:number,timestamp:string}} Point
  * @typedef {'linear'|'quadratic'|'logarithmic'|'exponential'} ModelFamily
@@ -62,26 +62,65 @@
     if(model.family==='logarithmic')return p.b/(x+p.c);
     return p.A*p.k*Math.exp(-p.k*x);
   }
-  // Historical display only: evaluate the selected phase law between its measured
-  // endpoints. Never infer the rate from adjacent temperature differences and
-  // never extend this curve beyond the last observation.
-  function rateCurve(phases,acq){
+  // Monotone piecewise cubic on actual timestamps; each smooth run stays inside
+  // a detected phase and stops at a sampling gap. This is only for the chart.
+  function historyCurve(phases,acq){
     const gaps=new Set((acq?.gaps||[]).map(g=>g.beforeIndex)),segments=[];
-    for(let phaseIndex=0;phaseIndex<phases.length;phaseIndex++){
-      const phase=phases[phaseIndex],points=phase.points,model=phase.model;
-      if(!model||points.length<4||points.at(-1).timeMs-points[0].timeMs<15*M)continue;
-      for(let i=1;i<points.length;i++){
-        const first=points[i-1].timeMs,last=points[i].timeMs;
-        if(!(last>first))continue;
-        const steps=Math.min(20,Math.max(2,Math.ceil((last-first)/(3*M))));
+    function endpoint(d0,d1,h0,h1){
+      let m=((2*h0+h1)*d0-h0*d1)/(h0+h1);
+      if(m*d0<=0)m=0;
+      else if(d0*d1<0&&Math.abs(m)>3*Math.abs(d0))m=3*d0;
+      return m;
+    }
+    function smoothRun(points,phaseIndex){
+      if(points.length<2)return;
+      const h=points.slice(1).map((p,i)=>(p.timeMs-points[i].timeMs)/H);
+      const d=h.map((v,i)=>(points[i+1].temperature-points[i].temperature)/v);
+      const m=Array(points.length);
+      if(points.length===2){m[0]=m[1]=d[0];}
+      else{
+        m[0]=endpoint(d[0],d[1],h[0],h[1]);
+        m[m.length-1]=endpoint(d.at(-1),d.at(-2),h.at(-1),h.at(-2));
+        for(let i=1;i<points.length-1;i++){
+          if(d[i-1]*d[i]<=0){m[i]=0;continue;}
+          const w1=2*h[i]+h[i-1],w2=h[i]+2*h[i-1];
+          m[i]=(w1+w2)/(w1/d[i-1]+w2/d[i]);
+        }
+      }
+      for(let i=0;i<points.length-1;i++){
+        const left=points[i],right=points[i+1],step=h[i],steps=Math.min(24,Math.max(2,Math.ceil(step*H/(3*M))));
         const samples=Array.from({length:steps+1},(_,j)=>{
-          const timeMs=first+(last-first)*j/steps;
-          return {timeMs,rateCPerHour:derivative(model,(timeMs-model.originMs)/H)};
+          const u=j/steps,u2=u*u,u3=u2*u;
+          const temperature=(2*u3-3*u2+1)*left.temperature+(u3-2*u2+u)*step*m[i]
+            +(-2*u3+3*u2)*right.temperature+(u3-u2)*step*m[i+1];
+          const rateCPerHour=((6*u2-6*u)*left.temperature+(3*u2-4*u+1)*step*m[i]
+            +(-6*u2+6*u)*right.temperature+(3*u2-2*u)*step*m[i+1])/step;
+          return {timeMs:left.timeMs+(right.timeMs-left.timeMs)*u,temperature,rateCPerHour};
         });
-        if(samples.every(p=>finite(p.rateCPerHour)))segments.push({phaseIndex,gap:gaps.has(phase.startIndex+i),samples});
+        segments.push({phaseIndex,gap:false,boundary:false,samples});
       }
     }
-    return segments;
+    for(let phaseIndex=0;phaseIndex<phases.length;phaseIndex++){
+      const phase=phases[phaseIndex],points=phase.points;
+      let runStart=0;
+      for(let i=1;i<=points.length;i++){
+        if(i<points.length&&!gaps.has(phase.startIndex+i))continue;
+        smoothRun(points.slice(runStart,i),phaseIndex);
+        if(i<points.length)segments.push({phaseIndex,gap:true,boundary:false,samples:[
+          {timeMs:points[i-1].timeMs,temperature:points[i-1].temperature},
+          {timeMs:points[i].timeMs,temperature:points[i].temperature}]});
+        runStart=i;
+      }
+      if(phaseIndex>0){const prev=phases[phaseIndex-1].points.at(-1),first=points[0];
+        segments.push({phaseIndex,gap:gaps.has(phase.startIndex),boundary:true,samples:[
+          {timeMs:prev.timeMs,temperature:prev.temperature},{timeMs:first.timeMs,temperature:first.temperature}]});
+      }
+    }
+    return segments.sort((a,b)=>a.samples[0].timeMs-b.samples[0].timeMs);
+  }
+  function rateCurve(phases,acq){
+    return historyCurve(phases,acq).filter(s=>!s.gap&&!s.boundary&&
+      phases[s.phaseIndex].points.length>=4&&phases[s.phaseIndex].endMs-phases[s.phaseIndex].startMs>=15*M);
   }
   function rawFit(points,family){
     const n=points.length,min={linear:2,quadratic:6,logarithmic:7,exponential:7}[family];
@@ -253,7 +292,7 @@
     const quality={key,label,detail:`${activePhase.points.length} mesures dans le régime actif${p.warnings.length?' · '+p.warnings[0]:''}.`};
     return {all,acq,phases,activePhase,...p,quality};
   }
-  const api={prepare,acquisition,rawFit,candidatesFor,select,detectPhases,evaluate,derivative,rateCurve,crossHours,analyze};
+  const api={prepare,acquisition,rawFit,candidatesFor,select,detectPhases,evaluate,derivative,historyCurve,rateCurve,crossHours,analyze};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.TemperatureAnalysis=api;
 })(typeof window!=='undefined'?window:globalThis);

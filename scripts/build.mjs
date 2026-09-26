@@ -3,7 +3,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 const root=path.resolve(import.meta.dirname,'..'),html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const inline=html.match(/<script>\s*([\s\S]*?)<\/script>/)?.[1];
-if(!inline||!html.includes('<script src="analysis.js?v=4.2.0"></script>'))throw new Error('Required versioned analysis script missing');
+if(!inline||!html.includes('<script src="analysis.js?v=4.2.1"></script>'))throw new Error('Required versioned analysis script missing');
 new vm.Script(inline,{filename:'index-inline.js'});
 new vm.Script(fs.readFileSync(path.join(root,'analysis.js'),'utf8'),{filename:'analysis.js'});
 const dist=path.join(root,'dist');fs.mkdirSync(dist,{recursive:true});
