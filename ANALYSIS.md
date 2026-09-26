@@ -1,8 +1,8 @@
-# Temperature analysis v4.1
+# Temperature analysis v4.1.1
 
 The recording schema stays at v5. Existing cooking exports import unchanged;
 `currentAnalysis` is derived data and ignored on import. Newly exported cooking
-files use `analysisVersion: "web-4.1"`. Units are milliseconds (timestamps),
+files use `analysisVersion: "web-4.1.1"`. Units are milliseconds (timestamps),
 hours (local regression axis), °C (temperature), and °C/h (derivative).
 
 1. Sort by timestamp and retain one observation per instant. Estimate normal
@@ -40,3 +40,6 @@ Ranges and confidence labels are engineering heuristics, not calibrated
 statistical confidence intervals. A new phase needs repeated supporting
 measurements. Manually check an unstable or stale ETA with a fresh probe
 measurement before relying on it for timing.
+
+The external analysis module has a versioned URL so a browser does not pair a
+new dashboard with a stale cached analysis script after publication.

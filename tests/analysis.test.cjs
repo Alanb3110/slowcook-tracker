@@ -70,7 +70,7 @@ test('old v5 cooking import and v5 export stay compatible with analysis v4.1',()
   vm.runInContext('state=migrateState({activeCooking:incoming.cooking,archivedCookings:[],schemaVersion:5})',context);
   const exportData=vm.runInContext('stateExportPayload()',context);
   assert.equal(exportData.schemaVersion,5);assert.equal(exportData.activeCooking.measurements.length,18);
-  assert.equal(vm.runInContext('ANALYSIS_VERSION',context),'web-4.1');
+  assert.equal(vm.runInContext('ANALYSIS_VERSION',context),'web-4.1.1');
 });
 
 test.after(()=>{console.log('DATASET_REPORT '+JSON.stringify(reports));});

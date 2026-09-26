@@ -1,4 +1,4 @@
-/* CuissonTracker analysis v4.1. Times are milliseconds, rates are °C/h.
+/* CuissonTracker analysis v4.1.1. Times are milliseconds, rates are °C/h.
  * This module has no DOM or storage dependency and also runs in Node tests.
  * @typedef {{timeMs:number,temperature:number,index:number,timestamp:string}} Point
  * @typedef {'linear'|'quadratic'|'logarithmic'|'exponential'} ModelFamily
