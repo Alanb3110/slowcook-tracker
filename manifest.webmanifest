@@ -1,0 +1,13 @@
+{
+  "id": "./",
+  "name": "CuissonTracker",
+  "short_name": "CuissonTracker",
+  "description": "Suivi local de la température de cuisson",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#08090b",
+  "theme_color": "#08090b",
+  "icons": [{"src":"./icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]
+}

@@ -80,7 +80,7 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand">CuissonTracker <small>v3.2.3</small></div>
+      <div class="brand">CuissonTracker <small>v3.3.0</small></div>
       <button class="icon-btn" id="historyTopBtn" aria-label="Historique">☰</button>
     </header>
     <main id="main"></main>
@@ -99,13 +99,15 @@
   <input id="fileInput" type="file" accept="application/json,.json" hidden>
 
 <script src="analysis.js?v=4.2.2"></script>
+<script src="prediction-history.js?v=1"></script>
+<script src="measurement-guidance.js?v=1"></script>
 <script>
 'use strict';
 
-// CuissonTracker Web v3.2.3 — local phase analysis v4.2.2
+// CuissonTracker Web v3.3.0 — local phase analysis v4.2.2
 // Data schema kept compatible with the Scriptable schema v5.
 
-const APP_VERSION = '3.2.3';
+const APP_VERSION = '3.3.0';
 const ANALYSIS_VERSION = 'web-4.2.2';
 const SCHEMA_VERSION = 5;
 const STORAGE_KEY = 'cuissonTracker.state.v5';
@@ -122,9 +124,12 @@ const FOOD_GROUPS = [
   ['Végétal / autre',['Légumes','Pommes de terre','Pain / pâte','Plat mijoté','Autre plat']]
 ];
 const EVENT_TYPES = [
-  ['wrapped','Emballé'],['unwrapped','Déballé'],['setpointChanged','Consigne modifiée'],['addedLiquid','Liquide ajouté'],['probeMoved','Sonde déplacée'],['longOpening','Ouverture prolongée'],['note','Note']
+  ['wrapped','Emballé'],['unwrapped','Déballé'],['covered','Plat couvert'],['uncovered','Plat découvert'],
+  ['turned','Plat retourné'],['modeChanged','Mode de cuisson modifié'],['setpointChanged','Consigne modifiée'],
+  ['addedLiquid','Liquide ajouté'],['probeMoved','Sonde déplacée'],['longOpening','Ouverture prolongée'],
+  ['otherBoundary','Autre changement'],['note','Note']
 ];
-const PHASE_BOUNDARY_TYPES = new Set(['wrapped','unwrapped','setpointChanged','addedLiquid','probeMoved','longOpening']);
+const PHASE_BOUNDARY_TYPES = new Set(['wrapped','unwrapped','covered','uncovered','turned','modeChanged','setpointChanged','addedLiquid','probeMoved','longOpening','otherBoundary']);
 
 let state = loadState();
 let chartRangeMinutes = 180;
@@ -188,23 +193,29 @@ function safeName(s){return String(s||'cuisson').normalize('NFD').replace(/[\u03
 
 function getSetpointAtTime(c,timeMs){
   let s=c.initialCookerSetpointC==null?NaN:Number(c.initialCookerSetpointC);
-  if(!Number.isFinite(s))s=c.cookerSetpointC==null?NaN:Number(c.cookerSetpointC);
+  if(!Number.isFinite(s)&&c.initialCookerSetpointC===undefined)s=c.cookerSetpointC==null?NaN:Number(c.cookerSetpointC);
   const ev=[...(c.events||[])].filter(e=>e.type==='setpointChanged'&&new Date(e.timestamp).getTime()<=timeMs).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
-  for(const e of ev){const n=Number(e.details?.toC);if(Number.isFinite(n))s=n;}
+  for(const e of ev){if(e.details?.toC===null){s=NaN;continue;}const n=Number(e.details?.toC);if(Number.isFinite(n))s=n;}
   return Number.isFinite(s)?s:null;
 }
+function syncSetpoint(c){c.cookerSetpointC=getSetpointAtTime(c,Infinity);}
 function analyzeCooking(c){
   const now=c.endedAt?new Date(c.endedAt).getTime():Date.now();
   const analysis=TemperatureAnalysis.analyze(c,now);
   return {...analysis,setpoint:analysis.all.length?getSetpointAtTime(c,analysis.all.at(-1).timeMs):null};
 }
+function recordPrediction(c,atMs=Date.now()){
+  const analysis=TemperatureAnalysis.analyze(c,atMs);
+  c.predictionLog=PredictionHistory.append(c.predictionLog,PredictionHistory.snapshot(c,analysis,atMs));
+}
+function invalidatePredictions(c,fromMs){c.predictionLog=PredictionHistory.invalidateFrom(c.predictionLog,fromMs);}
 function trendLabel(s){if(!Number.isFinite(s))return 'Tendance indisponible';if(s>8)return 'Montée rapide';if(s>2)return 'Montée';if(s>.5)return 'Montée lente';if(s>=-.5)return 'Quasi stable';return 'Température en baisse';}
 function qualityColor(q){return q==='good'?'#30d158':q==='usable'?'#0a84ff':q==='stale'?'#ff9f0a':'#8e8e93';}
 
 function render(){
   const main=document.getElementById('main'),bar=document.getElementById('bottomBar');
   if(!state.activeCooking){bar.classList.add('hidden');main.innerHTML=emptyHtml();return;}
-  bar.classList.remove('hidden');const c=state.activeCooking,a=analyzeCooking(c),last=a.all.at(-1),target=Number(c.targetTemperature),current=last?.temperature;
+  bar.classList.remove('hidden');const c=state.activeCooking,a=analyzeCooking(c),last=a.all.at(-1),target=Number(c.targetTemperature),current=last?.temperature,advice=MeasurementGuidance.recommend(c,a,Date.now());
   const pct=Number.isFinite(current)&&Number.isFinite(target)?clamp((current/target)*100,0,100):0;
   const meta=[c.foodType,Number.isFinite(Number(c.massKg))?`${fmtNum(c.massKg)} kg`:null,Number.isFinite(Number(c.maxThicknessCm))?`ép. ${fmtNum(c.maxThicknessCm)} cm`:null].filter(Boolean).join(' · ');
   let etaTitle='Pas encore d’estimation',etaDetail='Ajoute plusieurs mesures pour caractériser la tendance.';
@@ -226,8 +237,9 @@ function render(){
       <div class="stat"><div class="stat-label">Qualité</div><div class="stat-value"><span class="quality-dot" style="background:${qualityColor(a.quality.key)}"></span>${a.quality.label}</div><div class="stat-detail">${escapeHtml(a.quality.detail)}</div></div>
     </section>
     ${a.warnings.length?`<section class="card warning" role="status">⚠ ${escapeHtml(a.warnings.join(' · '))}</section>`:''}
+    ${advice?`<section class="card"><div class="stat-label">Prochaine mesure · indication</div><div class="stat-value">${escapeHtml(advice.when)}</div><div class="stat-detail">${escapeHtml(advice.why)}</div></section>`:''}
     <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-legend"><span class="temp-key">Température</span><button id="velocityToggle" type="button" class="velocity-toggle ${velocityVisible?'active':''}" aria-pressed="${velocityVisible}" onclick="toggleVelocity()"><span class="velocity-key">Vitesse °C/h</span></button></div><div class="chart-wrap"><canvas id="chart" role="img" aria-label="Température du cœur et vitesse historique lissée ; les pointillés relient les portions sans estimation de vitesse"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div><div class="chart-note" id="velocityNote"></div></section>
-    <section class="card analysis-details"><details><summary>Détails de l’analyse</summary>${analysisDetailsHtml(a)}</details></section>
+    <section class="card analysis-details"><details><summary>Détails de l’analyse</summary>${analysisDetailsHtml(a)}<button class="secondary" style="width:100%;margin-top:12px" onclick="openPredictionHistory()">Historique des ETA</button></details></section>
     <section class="card"><div class="section-head"><div class="section-title">Dernières mesures</div><button class="section-action" onclick="openMeasurements()">Tout voir</button></div>${recentMeasurementsHtml(c)}</section>`;
   requestAnimationFrame(()=>drawChart(c,a));
 }
@@ -294,36 +306,79 @@ function openNewCooking(){
 }
 function openAddMeasurement(){
   if(!state.activeCooking){openNewCooking();return;}const c=state.activeCooking,last=c.measurements.at(-1);openModal(modalHtml('Ajouter une mesure',`<div class="meta" style="margin-bottom:14px">${last?`Dernière : <strong>${fmtTemp(last.temperature)} °C</strong> à ${fmtClock(new Date(last.timestamp))}`:'Aucune mesure enregistrée'} · cible ${fmtTemp(c.targetTemperature)} °C</div><form id="measureForm"><div class="field"><label>Température mesurée (°C)</label><input id="measureTemp" inputmode="decimal" enterkeyhint="done" autofocus autocomplete="off" placeholder="ex. 76,5"></div><div class="error" id="measureErr"></div><button class="primary" type="submit">Ajouter maintenant</button></form>`));
-  document.getElementById('measureForm').addEventListener('submit',e=>{e.preventDefault();const t=parseTemperature(document.getElementById('measureTemp').value);if(t===null){document.getElementById('measureErr').textContent=`Entre une température entre ${MIN_TEMP_C} et ${MAX_TEMP_C} °C.`;return;}c.measurements.push({timestamp:localISOString(new Date()),temperature:t,source:'manual',comment:null});c.measurements.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));saveState();closeModal();render();toast(`${fmtTemp(t)} °C ajouté`);});
+  document.getElementById('measureForm').addEventListener('submit',e=>{e.preventDefault();const t=parseTemperature(document.getElementById('measureTemp').value);if(t===null){document.getElementById('measureErr').textContent=`Entre une température entre ${MIN_TEMP_C} et ${MAX_TEMP_C} °C.`;return;}const now=new Date();c.measurements.push({timestamp:localISOString(now),temperature:t,source:'manual',comment:null});c.measurements.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));recordPrediction(c,now.getTime());saveState();closeModal();render();toast(`${fmtTemp(t)} °C ajouté`);});
 }
 function openEvents(){
-  if(!state.activeCooking)return;openModal(modalHtml('Ajouter un événement',`<div class="menu-list">${EVENT_TYPES.map(([t,l])=>`<button class="menu-item" onclick="selectEvent('${t}')"><strong>${l}</strong></button>`).join('')}</div>`));
+  if(!state.activeCooking)return;
+  openModal(modalHtml('Ajouter un événement',`<div class="menu-list">${EVENT_TYPES.map(([t,l])=>`<button class="menu-item" onclick="selectEvent('${t}')"><strong>${l}</strong></button>`).join('')}<button class="menu-item" onclick="openEventHistory()"><strong>Voir les événements</strong><span>Corriger l’heure ou supprimer un événement.</span></button></div>`));
 }
-function selectEvent(type){const c=state.activeCooking;if(!c)return;const label=EVENT_TYPES.find(x=>x[0]===type)?.[1]||type;if(type==='setpointChanged'){openModal(modalHtml('Nouvelle consigne',`<form id="eventForm"><div class="field"><label>Consigne (°C)</label><input id="eventVal" inputmode="decimal" value="${Number.isFinite(Number(c.cookerSetpointC))?fmtNum(c.cookerSetpointC):''}" autofocus></div><div class="error" id="eventErr"></div><button class="primary" type="submit">Enregistrer</button></form>`));document.getElementById('eventForm').onsubmit=e=>{e.preventDefault();const n=parseOptional(document.getElementById('eventVal').value,0,350);if(n===null||n===undefined){document.getElementById('eventErr').textContent='Consigne invalide.';return;}addEvent(type,`Consigne ${fmtTemp(n)} °C`,{fromC:c.cookerSetpointC,toC:n});c.cookerSetpointC=n;saveState();closeModal();render();toast('Consigne enregistrée');};return;}
-  if(type==='wrapped'){openModal(modalHtml('Emballé',`<form id="eventForm"><div class="field"><label>Matériau (facultatif)</label><input id="eventText" placeholder="Aluminium, papier boucher…" autofocus></div><button class="primary" type="submit">Enregistrer</button></form>`));document.getElementById('eventForm').onsubmit=e=>{e.preventDefault();const material=document.getElementById('eventText').value.trim();addEvent(type,material?`Emballé — ${material}`:'Emballé',{material:material||null});closeModal();render();toast('Événement ajouté');};return;}
-  if(type==='note'){openModal(modalHtml('Ajouter une note',`<form id="eventForm"><div class="field"><label>Note</label><textarea id="eventText" autofocus placeholder="Retourné, arrosé, changement de position…"></textarea></div><div class="error" id="eventErr"></div><button class="primary" type="submit">Enregistrer</button></form>`));document.getElementById('eventForm').onsubmit=e=>{e.preventDefault();const note=document.getElementById('eventText').value.trim();if(!note){document.getElementById('eventErr').textContent='La note est vide.';return;}addEvent(type,note,{note});closeModal();render();toast('Note ajoutée');};return;}
-  addEvent(type,label,{});closeModal();render();toast('Événement ajouté');
+function eventForm(type,index=null){
+  const c=state.activeCooking,e=index===null?null:c?.events[index],known=EVENT_TYPES.some(([key])=>key===type);if(!c||(!known&&!e))return;
+  const title=EVENT_TYPES.find(([key])=>key===type)?.[1]||e.label||'Événement';
+  const value=type==='setpointChanged'?e?.details?.toC??c.cookerSetpointC??'':type==='modeChanged'?e?.details?.mode??'':type==='wrapped'?e?.details?.material??'':known?e?.details?.note??'':e?.label??'';
+  const textLabel=type==='setpointChanged'?'Consigne (°C)':type==='modeChanged'?'Mode de cuisson':type==='wrapped'?'Matériau (facultatif)':type==='note'?'Note':known?'Précision (facultative)':'Libellé';
+  const input=type==='note'?`<textarea id="eventVal" placeholder="Détail de l’événement">${escapeHtml(value)}</textarea>`:`<input id="eventVal" value="${escapeHtml(value)}" ${type==='setpointChanged'?'inputmode="decimal"':''} placeholder="${type==='modeChanged'?'Ex. Smoker, Roast, Bake':''}">`;
+  openModal(modalHtml(escapeHtml(index===null?title:`Modifier · ${title}`),`<form id="eventForm"><div class="field"><label>Date et heure</label><input id="eventTime" type="datetime-local" value="${toDatetimeLocal(e?.timestamp||localISOString(new Date()))}"></div><div class="field"><label>${textLabel}</label>${input}</div><div class="error" id="eventErr"></div><div class="actions">${index===null?'':`<button class="secondary danger" type="button" id="deleteEvent">Supprimer</button>`}<button class="primary" type="submit">Enregistrer</button></div></form>`));
+  document.getElementById('eventForm').onsubmit=ev=>{
+    ev.preventDefault();const ts=fromDatetimeLocal(document.getElementById('eventTime').value),at=Date.parse(ts),v=document.getElementById('eventVal').value.trim();
+    if(!ts||at<Date.parse(c.startTime)||at>Date.now()+60000){document.getElementById('eventErr').textContent='Heure hors de la cuisson ou dans le futur.';return;}
+    let details={},label=title;
+    if(type==='setpointChanged'){const n=parseOptional(v,0,350);if(n===null||n===undefined){document.getElementById('eventErr').textContent='Consigne invalide.';return;}details={fromC:e?.details?.fromC??c.cookerSetpointC,toC:n};label=`Consigne ${fmtTemp(n)} °C`;}
+    else if(type==='modeChanged'){if(!v){document.getElementById('eventErr').textContent='Indique le nouveau mode.';return;}details={mode:v};label=`Mode : ${v}`;}
+    else if(type==='wrapped'){details={material:v||null};if(v)label+=` — ${v}`;}
+    else if(!known){details=e.details||{};label=v||e.label||type;}
+    else{if(type==='note'&&!v){document.getElementById('eventErr').textContent='La note est vide.';return;}details={note:v||null};if(type==='note')label=v;else if(v)label+=` — ${v}`;}
+    if(e){invalidatePredictions(c,Math.min(Date.parse(e.timestamp),at));Object.assign(e,{timestamp:ts,label,details,phaseBoundary:known?PHASE_BOUNDARY_TYPES.has(type):e.phaseBoundary});c.events.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));syncSetpoint(c);saveState();}
+    else addEvent(type,label,details,ts);
+    closeModal();render();toast('Événement enregistré');
+  };
+  if(e)document.getElementById('deleteEvent').onclick=()=>{if(confirm(`Supprimer « ${e.label||title} » ?`)){invalidatePredictions(c,Date.parse(e.timestamp));c.events.splice(c.events.indexOf(e),1);syncSetpoint(c);saveState();closeModal();render();toast('Événement supprimé');}};
 }
-function addEvent(type,label,details){const c=state.activeCooking,now=new Date();c.events.push({id:makeId(type),timestamp:localISOString(now),type,label,phaseBoundary:PHASE_BOUNDARY_TYPES.has(type),details});c.events.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));saveState();}
+function selectEvent(type){eventForm(type);}
+function editEvent(i){const e=state.activeCooking?.events[i];if(e)eventForm(e.type,i);}
+function openEventHistory(){
+  const c=state.activeCooking;if(!c)return;
+  const rows=c.events.map((e,i)=>({e,i})).reverse().map(({e,i})=>`<div class="history-item"><div class="history-top"><strong>${escapeHtml(e.label||e.type)}</strong><span>${fmtDateTime(new Date(e.timestamp))}</span></div><div class="history-actions"><button class="mini-btn" onclick="editEvent(${i})">Modifier</button></div></div>`).join('');
+  openModal(modalHtml('Événements',rows||'<div class="small">Aucun événement.</div>'));
+}
+function addEvent(type,label,details,timestamp=localISOString(new Date())){
+  const c=state.activeCooking;c.events.push({id:makeId(type),timestamp,type,label,phaseBoundary:PHASE_BOUNDARY_TYPES.has(type),details});
+  c.events.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));invalidatePredictions(c,Date.parse(timestamp));syncSetpoint(c);saveState();
+}
 
 function openMeasurements(){const c=state.activeCooking;if(!c)return;const body=c.measurements.length?`<div class="measure-list">${[...c.measurements].map((m,i)=>({m,i})).reverse().map(({m,i})=>`<div class="measure-item"><div class="measure-time">${fmtClock(new Date(m.timestamp))}<br><span style="font-size:10px">${fmtDate(new Date(m.timestamp))}</span></div><div><div class="measure-temp">${fmtTemp(m.temperature)} °C</div>${m.comment?`<div class="small">${escapeHtml(m.comment)}</div>`:''}</div><button class="mini-btn" onclick="openEditMeasurement(${i})">Modifier</button></div>`).join('')}</div>`:`<div class="small">Aucune mesure.</div>`;openModal(modalHtml('Mesures',body));}
+function openPredictionHistory(c=state.activeCooking){
+  if(!c)return;
+  const entries=(c.predictionLog||[]).filter(x=>x?.kind==='eta-v1'),crossing=PredictionHistory.crossingWindow(c.measurements,Number(c.targetTemperature));
+  const result={compatible:'Compatible avec les mesures',early:'Prévue trop tôt',late:'Prévue trop tard',unknown:'Non vérifiable',changed:'Cuisson modifiée après cette prévision',invalidated:'Invalidée après correction des données'};
+  const context=crossing?`Cible franchie entre ${fmtDateTime(new Date(crossing.earliestAtMs))} et ${fmtDateTime(new Date(crossing.latestAtMs))}.`:'Heure de franchissement de la cible encore inconnue.';
+  const rows=entries.slice(-30).reverse().map(s=>{
+    const eta=s.eta?`${fmtClock(new Date(s.eta.earliestAtMs))}–${fmtClock(new Date(s.eta.latestAtMs))}`:'Pas d’ETA';
+    const confidence={high:'élevée',medium:'moyenne',low:'faible'}[s.confidence]||'inconnue';
+    const status=s.targetC===Number(c.targetTemperature)?result[PredictionHistory.assess(s,c.measurements,c.events)]:'Ancienne cible';
+    return `<div class="history-item"><div class="history-top"><strong>${fmtDateTime(new Date(s.issuedAt))} · ${fmtTemp(s.measuredC)} °C</strong><span>${eta}</span></div><div class="history-sub">${modelLabel(s.model)} · confiance ${confidence} · cible ${fmtTemp(s.targetC)} °C</div><div class="history-sub">${escapeHtml(status)}${!s.eta&&s.reason?` · ${escapeHtml(s.reason)}`:''}</div></div>`;
+  }).join('');
+  openModal(modalHtml('Historique des ETA',`<div class="hint">${context} Chaque ligne a été enregistrée lors d’une mesure ; un franchissement entre deux mesures reste un intervalle, jamais une heure exacte. Ces comparaisons ne corrigent pas automatiquement les prévisions.</div><div class="sep"></div>${rows||'<div class="small">Aucun historique pour les cuissons importées ou avant cette version. Il commencera à la prochaine mesure.</div>'}${entries.length>30?`<div class="hint">30 dernières prévisions sur ${entries.length} ; toutes restent dans l’export JSON.</div>`:''}`));
+}
 function editMeasurementByTimestamp(encoded){const ts=decodeURIComponent(encoded),i=state.activeCooking?.measurements.findIndex(m=>m.timestamp===ts);if(i>=0)openEditMeasurement(i);}
-function openEditMeasurement(i){const c=state.activeCooking,m=c?.measurements[i];if(!m)return;openModal(modalHtml('Modifier la mesure',`<form id="editMeasureForm"><div class="field"><label>Température (°C)</label><input id="editTemp" inputmode="decimal" value="${fmtNum(m.temperature)}" autofocus></div><div class="field"><label>Date et heure</label><input id="editTime" type="datetime-local" value="${toDatetimeLocal(m.timestamp)}"></div><div class="field"><label>Commentaire</label><input id="editComment" value="${escapeHtml(m.comment||'')}" placeholder="Facultatif"></div><div class="error" id="editErr"></div><div class="actions"><button type="button" class="secondary danger" id="deleteMeasure">Supprimer</button><button class="primary" type="submit">Enregistrer</button></div></form>`));document.getElementById('editMeasureForm').onsubmit=e=>{e.preventDefault();const t=parseTemperature(document.getElementById('editTemp').value),ts=fromDatetimeLocal(document.getElementById('editTime').value);if(t===null||!ts){document.getElementById('editErr').textContent='Valeur ou date invalide.';return;}m.temperature=t;m.timestamp=ts;m.comment=document.getElementById('editComment').value.trim()||null;c.measurements.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));saveState();closeModal();render();toast('Mesure modifiée');};document.getElementById('deleteMeasure').onclick=()=>{if(confirm(`Supprimer ${fmtTemp(m.temperature)} °C à ${fmtClock(new Date(m.timestamp))} ?`)){c.measurements.splice(i,1);saveState();closeModal();render();toast('Mesure supprimée');}};}
+function openEditMeasurement(i){const c=state.activeCooking,m=c?.measurements[i];if(!m)return;openModal(modalHtml('Modifier la mesure',`<form id="editMeasureForm"><div class="field"><label>Température (°C)</label><input id="editTemp" inputmode="decimal" value="${fmtNum(m.temperature)}" autofocus></div><div class="field"><label>Date et heure</label><input id="editTime" type="datetime-local" value="${toDatetimeLocal(m.timestamp)}"></div><div class="field"><label>Commentaire</label><input id="editComment" value="${escapeHtml(m.comment||'')}" placeholder="Facultatif"></div><div class="error" id="editErr"></div><div class="actions"><button type="button" class="secondary danger" id="deleteMeasure">Supprimer</button><button class="primary" type="submit">Enregistrer</button></div></form>`));document.getElementById('editMeasureForm').onsubmit=e=>{e.preventDefault();const t=parseTemperature(document.getElementById('editTemp').value),ts=fromDatetimeLocal(document.getElementById('editTime').value);if(t===null||!ts){document.getElementById('editErr').textContent='Valeur ou date invalide.';return;}if(m.temperature!==t||Date.parse(m.timestamp)!==Date.parse(ts))invalidatePredictions(c,Math.min(Date.parse(m.timestamp),Date.parse(ts)));m.temperature=t;m.timestamp=ts;m.comment=document.getElementById('editComment').value.trim()||null;c.measurements.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));saveState();closeModal();render();toast('Mesure modifiée');};document.getElementById('deleteMeasure').onclick=()=>{if(confirm(`Supprimer ${fmtTemp(m.temperature)} °C à ${fmtClock(new Date(m.timestamp))} ?`)){invalidatePredictions(c,Date.parse(m.timestamp));c.measurements.splice(i,1);saveState();closeModal();render();toast('Mesure supprimée');}};}
 
 function openMore(){if(!state.activeCooking)return;openModal(modalHtml('Plus',`<div class="menu-list">
   <button class="menu-item" onclick="openParameters()"><strong>Paramètres de cuisson</strong><span>Cible, consigne, masse, épaisseur…</span></button>
   <button class="menu-item" onclick="openMeasurements()"><strong>Modifier les mesures</strong><span>Température, heure ou suppression.</span></button>
+  <button class="menu-item" onclick="openEventHistory()"><strong>Événements</strong><span>Consignes, modes, couverture et horaires modifiables.</span></button>
+  <button class="menu-item" onclick="openPredictionHistory()"><strong>Historique des ETA</strong><span>Prévisions enregistrées au fil des mesures et comparaison à la cible.</span></button>
   <button class="menu-item" onclick="exportCookingJson(state.activeCooking)"><strong>Exporter cette cuisson</strong><span>JSON compatible et CSV.</span></button>
   <button class="menu-item" onclick="finishCooking()"><strong>Terminer et archiver</strong><span>Conserve la cuisson dans l’historique.</span></button>
   <button class="menu-item" onclick="openHistory()"><strong>Historique et données</strong><span>Sauvegarde, import, anciennes cuissons.</span></button>
 </div>`));}
-function openParameters(){const c=state.activeCooking;if(!c)return;openModal(modalHtml('Paramètres',`<form id="paramForm"><div class="field"><label>Nom</label><input id="pName" value="${escapeHtml(c.name)}"></div><div class="field"><label>Type de viande / plat</label><select id="pFood">${foodOptions(c.foodType||'')}</select></div><div class="form-row"><div class="field"><label>Cible (°C)</label><input id="pTarget" inputmode="decimal" value="${fmtNum(c.targetTemperature)}"></div><div class="field"><label>Consigne (°C)</label><input id="pSetpoint" inputmode="decimal" value="${fmtNum(c.cookerSetpointC)}"></div></div><div class="form-row"><div class="field"><label>Masse (kg)</label><input id="pMass" inputmode="decimal" value="${fmtNum(c.massKg)}"></div><div class="field"><label>Épaisseur (cm)</label><input id="pThickness" inputmode="decimal" value="${fmtNum(c.maxThicknessCm)}"></div></div><div class="error" id="paramErr"></div><button class="primary" type="submit">Enregistrer</button></form>`));document.getElementById('paramForm').onsubmit=e=>{e.preventDefault();const name=document.getElementById('pName').value.trim(),target=parseTemperature(document.getElementById('pTarget').value),sp=parseOptional(document.getElementById('pSetpoint').value,0,350),mass=parseOptional(document.getElementById('pMass').value,.01,100),th=parseOptional(document.getElementById('pThickness').value,.1,200);if(!name||target===null||sp===undefined||mass===undefined||th===undefined){document.getElementById('paramErr').textContent='Vérifie les valeurs.';return;}const old=c.cookerSetpointC;c.name=name;c.targetTemperature=target;c.foodType=document.getElementById('pFood').value||null;c.massKg=mass;c.maxThicknessCm=th;if(c.measurements.length&&sp!==null&&Number(old)!==Number(sp)){addEvent('setpointChanged',`Consigne ${fmtTemp(sp)} °C`,{fromC:old,toC:sp,source:'parameters-edit'});}c.cookerSetpointC=sp;if(!c.measurements.length)c.initialCookerSetpointC=sp;saveState();closeModal();render();toast('Paramètres enregistrés');};}
+function openParameters(){const c=state.activeCooking;if(!c)return;openModal(modalHtml('Paramètres',`<form id="paramForm"><div class="field"><label>Nom</label><input id="pName" value="${escapeHtml(c.name)}"></div><div class="field"><label>Type de viande / plat</label><select id="pFood">${foodOptions(c.foodType||'')}</select></div><div class="form-row"><div class="field"><label>Cible (°C)</label><input id="pTarget" inputmode="decimal" value="${fmtNum(c.targetTemperature)}"></div><div class="field"><label>Consigne (°C)</label><input id="pSetpoint" inputmode="decimal" value="${fmtNum(c.cookerSetpointC)}"></div></div><div class="form-row"><div class="field"><label>Masse (kg)</label><input id="pMass" inputmode="decimal" value="${fmtNum(c.massKg)}"></div><div class="field"><label>Épaisseur (cm)</label><input id="pThickness" inputmode="decimal" value="${fmtNum(c.maxThicknessCm)}"></div></div><div class="error" id="paramErr"></div><button class="primary" type="submit">Enregistrer</button></form>`));document.getElementById('paramForm').onsubmit=e=>{e.preventDefault();const name=document.getElementById('pName').value.trim(),target=parseTemperature(document.getElementById('pTarget').value),sp=parseOptional(document.getElementById('pSetpoint').value,0,350),mass=parseOptional(document.getElementById('pMass').value,.01,100),th=parseOptional(document.getElementById('pThickness').value,.1,200);if(!name||target===null||sp===undefined||mass===undefined||th===undefined){document.getElementById('paramErr').textContent='Vérifie les valeurs.';return;}const old=c.cookerSetpointC;if(Number(c.targetTemperature)!==target)invalidatePredictions(c,-Infinity);c.name=name;c.targetTemperature=target;c.foodType=document.getElementById('pFood').value||null;c.massKg=mass;c.maxThicknessCm=th;if(c.measurements.length&&(old==null?null:Number(old))!==sp){addEvent('setpointChanged',sp===null?'Consigne effacée':`Consigne ${fmtTemp(sp)} °C`,{fromC:old,toC:sp,source:'parameters-edit'});}c.cookerSetpointC=sp;if(!c.measurements.length)c.initialCookerSetpointC=sp;saveState();closeModal();render();toast('Paramètres enregistrés');};}
 function finishCooking(){const c=state.activeCooking;if(!c)return;if(!confirm(`Terminer « ${c.name} » et l’archiver ?`))return;state.archivedCookings.push({...c,endedAt:localISOString(new Date()),archiveReason:'completed'});state.activeCooking=null;saveState();closeModal();render();toast('Cuisson archivée');}
 
 function openHistory(){const items=[...state.archivedCookings].map((c,i)=>({c,i})).reverse();openModal(modalHtml('Historique et données',`
   <div class="actions" style="margin-top:0"><button class="secondary" onclick="exportState()">Sauvegarder JSON</button><button class="secondary" onclick="document.getElementById('fileInput').click()">Importer JSON</button></div>
-  <div class="hint">Les données sont stockées localement dans Safari/PWA sur cet appareil. Une sauvegarde JSON périodique est recommandée.</div><div class="sep"></div>
-  ${items.length?items.map(({c,i})=>`<div class="history-item"><div class="history-top"><div><div class="history-title">${escapeHtml(c.name)}</div><div class="history-sub">${fmtDate(new Date(c.startTime))} · ${c.measurements?.length||0} mesures · cible ${fmtTemp(c.targetTemperature)} °C</div></div><div class="small">${c.endedAt?fmtClock(new Date(c.endedAt)):''}</div></div><div class="history-actions"><button class="mini-btn" onclick="exportCookingJson(state.archivedCookings[${i}])">Exporter</button><button class="mini-btn" onclick="restoreArchived(${i})">Réactiver</button><button class="mini-btn danger" onclick="deleteArchived(${i})">Supprimer</button></div></div>`).join(''):`<div class="small">Aucune cuisson archivée.</div>`}
+  <div class="hint">Les données restent sur cet appareil. Une première visite en ligne prépare le mode hors ligne ; vérifie-le sur ton iPhone. Exporte régulièrement une sauvegarde JSON : le stockage local peut être effacé.</div><div class="sep"></div>
+  ${items.length?items.map(({c,i})=>`<div class="history-item"><div class="history-top"><div><div class="history-title">${escapeHtml(c.name)}</div><div class="history-sub">${fmtDate(new Date(c.startTime))} · ${c.measurements?.length||0} mesures · cible ${fmtTemp(c.targetTemperature)} °C</div></div><div class="small">${c.endedAt?fmtClock(new Date(c.endedAt)):''}</div></div><div class="history-actions"><button class="mini-btn" onclick="exportCookingJson(state.archivedCookings[${i}])">Exporter</button><button class="mini-btn" onclick="openPredictionHistory(state.archivedCookings[${i}])">ETA</button><button class="mini-btn" onclick="restoreArchived(${i})">Réactiver</button><button class="mini-btn danger" onclick="deleteArchived(${i})">Supprimer</button></div></div>`).join(''):`<div class="small">Aucune cuisson archivée.</div>`}
   <div class="sep"></div><button class="secondary danger" style="width:100%" onclick="resetAllData()">Effacer toutes les données</button><div class="hint">CuissonTracker Web ${APP_VERSION} · schéma ${SCHEMA_VERSION}</div>`));}
 function restoreArchived(i){const c=state.archivedCookings[i];if(!c)return;if(state.activeCooking&&!confirm('La cuisson active sera archivée. Continuer ?'))return;if(state.activeCooking)state.archivedCookings.push({...state.activeCooking,endedAt:localISOString(new Date()),archiveReason:'replaced-by-restored-cooking'});state.archivedCookings.splice(i,1);state.activeCooking={...c,endedAt:undefined,archiveReason:undefined};saveState();closeModal();render();toast('Cuisson réactivée');}
 function deleteArchived(i){const c=state.archivedCookings[i];if(c&&confirm(`Supprimer définitivement « ${c.name} » ?`)){state.archivedCookings.splice(i,1);saveState();openHistory();}}
