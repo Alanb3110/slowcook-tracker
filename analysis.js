@@ -187,6 +187,8 @@
     if(activeGaps.length)warnings.push(`Grand intervalle dans le régime actif (${Math.round(Math.max(...activeGaps.map(g=>g.minutes)))} min)`);
     if(points.length<5)warnings.push('Peu de mesures dans le régime actif');
     if(points.length>1&&spanH*60/(points.length-1)>Math.max(25,acq.baselineIntervalMinutes*2.5))warnings.push('Mesures espacées dans le régime actif');
+    const outliers=model?points.filter(p=>Math.abs(p.temperature-evaluate(model,(p.timeMs-model.originMs)/H))>Math.max(3,3*model.rmseC)):[];
+    if(outliers.length===1&&outliers[0]!==last)warnings.push('Point atypique isolé dans le régime actif');
     const lastResidual=model?Math.abs(last.temperature-evaluate(model,(last.timeMs-model.originMs)/H)):Infinity;
     const atypical=lastResidual>Math.max(3,3*(model?.rmseC??0));
     if(atypical)warnings.push('Dernière mesure atypique : confirmer la sonde');

@@ -31,7 +31,7 @@ test('E large gap in an unchanged linear process reduces confidence, never parti
   const a=check(cooking([0,8,16,24,32,40,48,56,64,72,130,138,146],t=>30+.25*t));reports.push(report('E',a));assert.equal(a.phases.length,1);assert.ok(a.acq.gaps.length);assert.equal(a.activePhase.points.length,13);assert.equal(a.activePhase.model.family,'linear');
 });
 test('F isolated outlier does not create a permanent phase',()=>{
-  const a=check(cooking(regular,(t,i)=>30+.25*t+(i===9?9:0)));reports.push(report('F',a));assert.equal(a.phases.length,1);
+  const a=check(cooking(regular,(t,i)=>30+.25*t+(i===9?9:0)));reports.push(report('F',a));assert.equal(a.phases.length,1);assert.match(a.warnings.join(' '),/atypique/);
   const tail=check(cooking(regular,(t,i)=>30+.25*t+(i===18?12:0)));
   assert.equal(tail.phases.length,1);assert.equal(tail.eta,null);assert.match(tail.warnings.join(' '),/atypique/);
 });
