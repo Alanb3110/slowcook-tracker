@@ -1,4 +1,4 @@
-/* CuissonTracker analysis v4.2.1. Times are milliseconds, rates are °C/h.
+/* CuissonTracker analysis v4.2.2. Times are milliseconds, rates are °C/h.
  * This module has no DOM or storage dependency and also runs in Node tests.
  * @typedef {{timeMs:number,temperature:number,index:number,timestamp:string}} Point
  * @typedef {'linear'|'quadratic'|'logarithmic'|'exponential'} ModelFamily
@@ -119,8 +119,48 @@
     return segments.sort((a,b)=>a.samples[0].timeMs-b.samples[0].timeMs);
   }
   function rateCurve(phases,acq){
-    return historyCurve(phases,acq).filter(s=>!s.gap&&!s.boundary&&
-      phases[s.phaseIndex].points.length>=4&&phases[s.phaseIndex].endMs-phases[s.phaseIndex].startMs>=15*M);
+    const history=historyCurve(phases,acq),gaps=new Set((acq?.gaps||[]).map(g=>g.beforeIndex)),segments=[];
+    // Local weighted line on real timestamps. A window spans at least 25 min
+    // and three observations; an isolated short measurement interval cannot
+    // dictate the derivative. Two well separated observations give an average.
+    function localSlope(points,timeMs){
+      if(points.length===2){const dt=(points[1].timeMs-points[0].timeMs)/H;
+        return dt>=.25?(points[1].temperature-points[0].temperature)/dt:null;}
+      if(points.at(-1).timeMs-points[0].timeMs<12*M)return null;
+      const distances=points.map(p=>Math.abs(p.timeMs-timeMs)).sort((a,b)=>a-b);
+      const radius=Math.max(25*M,1.4*distances[2]+1);
+      const neighborhood=points.map(p=>{
+        const distance=Math.abs(p.timeMs-timeMs)/radius;
+        const base=distance<1?Math.pow(1-Math.pow(distance,3),3):0;
+        return {x:(p.timeMs-timeMs)/H,y:p.temperature,base};
+      }).filter(p=>p.base>0);
+      if(neighborhood.length<3||neighborhood.at(-1).x-neighborhood[0].x<.2)return null;
+      let weights=neighborhood.map(p=>p.base),fit=null;
+      for(let iteration=0;iteration<3;iteration++){
+        let w=0,x=0,y=0,xx=0,xy=0;
+        neighborhood.forEach((p,i)=>{const v=weights[i];w+=v;x+=v*p.x;y+=v*p.y;xx+=v*p.x*p.x;xy+=v*p.x*p.y;});
+        const denom=w*xx-x*x;if(denom<1e-12)return null;
+        const b=(w*xy-x*y)/denom,a=(y-b*x)/w;fit=b;
+        if(iteration<2)weights=neighborhood.map(p=>p.base*Math.min(1,1.5/Math.max(Math.abs(p.y-a-b*p.x),1e-9)));
+      }
+      return fit;
+    }
+    for(let phaseIndex=0;phaseIndex<phases.length;phaseIndex++){
+      const phase=phases[phaseIndex],points=phase.points;
+      if(points.length<4||phase.endMs-phase.startMs<15*M)continue;
+      let runStart=0;
+      for(let i=1;i<=points.length;i++){
+        if(i<points.length&&!gaps.has(phase.startIndex+i))continue;
+        const run=points.slice(runStart,i);
+        if(run.length>=2)for(const s of history){
+          if(s.phaseIndex!==phaseIndex||s.gap||s.boundary||s.samples[0].timeMs<run[0].timeMs||s.samples.at(-1).timeMs>run.at(-1).timeMs)continue;
+          const samples=s.samples.map(p=>({...p,rateCPerHour:localSlope(run,p.timeMs)}));
+          if(samples.every(p=>finite(p.rateCPerHour)))segments.push({...s,samples});
+        }
+        runStart=i;
+      }
+    }
+    return segments;
   }
   function rawFit(points,family){
     const n=points.length,min={linear:2,quadratic:6,logarithmic:7,exponential:7}[family];

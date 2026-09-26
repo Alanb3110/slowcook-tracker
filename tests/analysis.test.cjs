@@ -58,7 +58,7 @@ test('multi-regime complete cook and target crossing',()=>{
   const times=Array.from({length:33},(_,i)=>i*8),c=cooking(times,t=>t<=72?30+.4*t:t<=152?58.8+.12*(t-72):68.4+.32*(t-152),106.68,68);
   const a=check(c);reports.push(report('Full cook',a));assert.equal(a.phases.length,3);assert.ok(a.eta);assert.ok(a.eta.estimatedAtMs>Date.parse(c.measurements.at(-1).timestamp));
 });
-test('old v5 cooking import and v5 export stay compatible with analysis v4.2.1',()=>{
+test('old v5 cooking import and v5 export stay compatible with analysis v4.2.2',()=>{
   const d=require('./paleron-real-v5.json'),html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
   const inline=html.match(/<script>\s*([\s\S]*?)<\/script>/)?.[1];assert.ok(inline);
   const fakeElement=()=>({classList:{add(){},remove(){}},addEventListener(){},innerHTML:'',getBoundingClientRect(){return {width:390,height:270};}});
@@ -70,10 +70,10 @@ test('old v5 cooking import and v5 export stay compatible with analysis v4.2.1',
   vm.runInContext('state=migrateState({activeCooking:incoming.cooking,archivedCookings:[],schemaVersion:5})',context);
   const exportData=vm.runInContext('stateExportPayload()',context);
   assert.equal(exportData.schemaVersion,5);assert.equal(exportData.activeCooking.measurements.length,18);
-  assert.equal(vm.runInContext('ANALYSIS_VERSION',context),'web-4.2.1');
+  assert.equal(vm.runInContext('ANALYSIS_VERSION',context),'web-4.2.2');
 });
 
-test('historical derivative matches the displayed temperature interpolation, not future ETA',()=>{
+test('time-local displayed rate keeps an exact linear slope, without changing ETA',()=>{
   const c=cooking([0,2,5,17,18,27,40,65,67,85,101,130],t=>35+.3*t);
   const a=check(c),segments=A.rateCurve(a.phases,a.acq);
   assert.equal(a.phases.length,1);assert.equal(segments.length,c.measurements.length-1);
@@ -101,7 +101,7 @@ test('sparse phases hide rate and real Paleron preserves its gap indication',()=
   assert.ok(segments.every(s=>!s.gap));
   assert.ok(segments.every(s=>s.samples.at(-1).timeMs<=last));
 });
-test('irregular PCHIP values and rates agree; no overshoot or invented velocity in a 91 min gap',()=>{
+test('PCHIP stays monotone; local rate omits a 91 min gap',()=>{
   const c=cooking([0,10,20,30,40,50,141,171],(t,i)=>[64,66,68,70,73,77,80,84][i]);
   const points=A.prepare(c),acq=A.acquisition(points,points.at(-1).timeMs);
   const phase={startIndex:0,endIndex:points.length-1,startMs:points[0].timeMs,endMs:points.at(-1).timeMs,
@@ -115,10 +115,22 @@ test('irregular PCHIP values and rates agree; no overshoot or invented velocity 
   for(const s of rates){
     const values=s.samples.map(p=>p.temperature),a=values[0],b=values.at(-1);
     assert.ok(values.every(v=>v>=Math.min(a,b)-1e-10&&v<=Math.max(a,b)+1e-10));
-    const middle=Math.floor(values.length/2),p=s.samples;
-    const numerical=(p[middle+1].temperature-p[middle-1].temperature)/((p[middle+1].timeMs-p[middle-1].timeMs)/3600000);
-    assert.ok(Math.abs(numerical-p[middle].rateCPerHour)<.2);
+    assert.ok(s.samples.every(p=>Number.isFinite(p.rateCPerHour)));
   }
+});
+test('a one-degree reading 48 s later cannot dominate a six-hour rate axis',()=>{
+  const c=cooking([0,8,16,23,24,24.8,28,36,44,52,60],(t,i)=>[30,33,36,39,40,41,42,45,48,51,54][i]);
+  const points=A.prepare(c),acq=A.acquisition(points,points.at(-1).timeMs),phase={startIndex:0,endIndex:points.length-1,
+    startMs:points[0].timeMs,endMs:points.at(-1).timeMs,points};
+  const raw=Math.max(...A.historyCurve([phase],acq).flatMap(s=>s.samples.map(p=>p.rateCPerHour)));
+  const smooth=Math.max(...A.rateCurve([phase],acq).flatMap(s=>s.samples.map(p=>p.rateCPerHour)));
+  assert.ok(raw>50);assert.ok(smooth>15&&smooth<42);
+});
+test('an isolated aberrant point does not dominate the smoothed rate',()=>{
+  const a=check(cooking(regular,(t,i)=>30+.25*t+(i===9?9:0)));
+  const v=A.rateCurve(a.phases,a.acq).flatMap(s=>s.samples.map(p=>p.rateCPerHour));
+  assert.equal(a.phases.length,1);assert.ok(v.length);
+  assert.ok(Math.min(...v)>0&&Math.max(...v)<30);
 });
 test('the historical display never changes phase fitting or ETA',()=>{
   const d=require('./paleron-real-v5.json'),c=d.cooking,last=Date.parse(c.measurements.at(-1).timestamp);

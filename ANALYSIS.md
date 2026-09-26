@@ -1,8 +1,8 @@
-# Temperature analysis v4.2.1
+# Temperature analysis v4.2.2
 
 The recording schema stays at v5. Existing cooking exports import unchanged;
 `currentAnalysis` is derived data and ignored on import. Newly exported cooking
-files use `analysisVersion: "web-4.2.1"`. Units are milliseconds (timestamps),
+files use `analysisVersion: "web-4.2.2"`. Units are milliseconds (timestamps),
 hours (local regression axis), °C (temperature), and °C/h (derivative).
 
 1. Sort by timestamp and retain one observation per instant. Estimate normal
@@ -36,14 +36,25 @@ hours (local regression axis), °C (temperature), and °C/h (derivative).
 The historical temperature line uses monotone piecewise cubic Hermite (PCHIP)
 interpolation within each phase, preserving each measured value at its real
 timestamp. At a large gap it displays a dashed straight join instead of
-pretending the thermal path is known. Its optional cyan derivative in °C/h
-comes from that same interpolation. It stops at gaps and phase boundaries,
-and never extrapolates beyond the last measurement. A phase needs at least
-four measurements spanning 15 min to display its rate; if a continuous run
-contains only two points, the interval's rate is their average slope.
+pretending the thermal path is known. The optional cyan rate is deliberately
+smoothed separately from this exact-through-points temperature drawing. For
+each chart time `t`, regress measured temperature in °C against real elapsed
+hours on the same continuous phase run. Include at least three measurements
+in a neighborhood of radius `max(25 min, 1.4 × distance to third closest
+measurement)`, with tricube time weights `w=(1-(|t_i-t|/radius)^3)^3` inside
+the radius. Reweight large fit residuals twice with
+`min(1, 1.5 °C / |residual|)`; the fitted line's slope is the shown °C/h.
+Require at least 12 min of supporting measurements. A run of exactly two
+points spanning at least 15 min uses their interval-average slope instead.
+Short isolated pairs cannot cause a large plotted derivative by themselves.
+The rate stops at gaps and phase boundaries and never extrapolates.
+This is a time-based local linear smoother inspired by Cleveland's robust
+locally weighted regression (DOI: 10.1080/01621459.1979.10481038); the
+specific window and residual thresholds here are application heuristics,
+not calibrated physical uncertainty bounds.
 The right axis scales independently of core temperature. The dashed green
 15 min extension displays the separate active-phase projection; the graphical
-interpolation and its derivative never feed the ETA. The trend card names the
+interpolation and smoothed rate never feed the ETA. The trend card names the
 active model explicitly, since its slope can differ from the chart's local
 historical rate after a sparse measurement interval.
 Ranges and confidence labels are engineering heuristics, not calibrated

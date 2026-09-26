@@ -80,7 +80,7 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand">CuissonTracker <small>v3.2.1</small></div>
+      <div class="brand">CuissonTracker <small>v3.2.2</small></div>
       <button class="icon-btn" id="historyTopBtn" aria-label="Historique">☰</button>
     </header>
     <main id="main"></main>
@@ -98,15 +98,15 @@
   <div class="toast" id="toast"></div>
   <input id="fileInput" type="file" accept="application/json,.json" hidden>
 
-<script src="analysis.js?v=4.2.1"></script>
+<script src="analysis.js?v=4.2.2"></script>
 <script>
 'use strict';
 
-// CuissonTracker Web v3.2.1 — local phase analysis v4.2.1
+// CuissonTracker Web v3.2.2 — local phase analysis v4.2.2
 // Data schema kept compatible with the Scriptable schema v5.
 
-const APP_VERSION = '3.2.1';
-const ANALYSIS_VERSION = 'web-4.2.1';
+const APP_VERSION = '3.2.2';
+const ANALYSIS_VERSION = 'web-4.2.2';
 const SCHEMA_VERSION = 5;
 const STORAGE_KEY = 'cuissonTracker.state.v5';
 const MIN_TEMP_C = -20;
@@ -226,7 +226,7 @@ function render(){
       <div class="stat"><div class="stat-label">Qualité</div><div class="stat-value"><span class="quality-dot" style="background:${qualityColor(a.quality.key)}"></span>${a.quality.label}</div><div class="stat-detail">${escapeHtml(a.quality.detail)}</div></div>
     </section>
     ${a.warnings.length?`<section class="card warning" role="status">⚠ ${escapeHtml(a.warnings.join(' · '))}</section>`:''}
-    <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-legend"><span class="temp-key">Température</span><button id="velocityToggle" type="button" class="velocity-toggle ${velocityVisible?'active':''}" aria-pressed="${velocityVisible}" onclick="toggleVelocity()"><span class="velocity-key">Vitesse °C/h</span></button></div><div class="chart-wrap"><canvas id="chart" role="img" aria-label="Température du cœur et vitesse historique estimée entre les mesures"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div><div class="chart-note" id="velocityNote"></div></section>
+    <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-legend"><span class="temp-key">Température</span><button id="velocityToggle" type="button" class="velocity-toggle ${velocityVisible?'active':''}" aria-pressed="${velocityVisible}" onclick="toggleVelocity()"><span class="velocity-key">Vitesse °C/h</span></button></div><div class="chart-wrap"><canvas id="chart" role="img" aria-label="Température du cœur et vitesse historique lissée entre les mesures"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div><div class="chart-note" id="velocityNote"></div></section>
     <section class="card analysis-details"><details><summary>Détails de l’analyse</summary>${analysisDetailsHtml(a)}</details></section>
     <section class="card"><div class="section-head"><div class="section-title">Dernières mesures</div><button class="section-action" onclick="openMeasurements()">Tout voir</button></div>${recentMeasurementsHtml(c)}</section>`;
   requestAnimationFrame(()=>drawChart(c,a));
@@ -241,10 +241,10 @@ function drawChart(c,a){
   const pts=a.all;if(!pts.length){ctx.fillStyle='#8e8e93';ctx.font='13px -apple-system';ctx.textAlign='center';ctx.fillText('Ajoute une mesure pour afficher la courbe',w/2,h/2);return;}
   const lastTime=pts.at(-1).timeMs,end=lastTime+(Number.isFinite(a.projection)?15*60000:0);let start=chartRangeMinutes?lastTime-chartRangeMinutes*60000:Math.min(new Date(c.startTime).getTime(),pts[0].timeMs);const visible=pts.filter(p=>p.timeMs>=start);if(visible.length===1)start=Math.min(start,visible[0].timeMs-30*60000);
   const history=TemperatureAnalysis.historyCurve(a.phases,a.acq).filter(s=>s.samples.at(-1).timeMs>=start&&s.samples[0].timeMs<=end);
-  const rateSegments=velocityVisible?history.filter(s=>!s.gap&&!s.boundary&&a.phases[s.phaseIndex].points.length>=4&&a.phases[s.phaseIndex].endMs-a.phases[s.phaseIndex].startMs>=15*60000):[];
+  const rateSegments=velocityVisible?TemperatureAnalysis.rateCurve(a.phases,a.acq).filter(s=>s.samples.at(-1).timeMs>=start&&s.samples[0].timeMs<=end):[];
   const rateValues=rateSegments.flatMap(s=>s.samples.map(p=>p.rateCPerHour));const hasRates=rateValues.length>0;if(hasRates){mt=22;ph=h-mt-mb;}
   const mr=hasRates?49:10,pw=w-ml-mr;
-  const note=document.getElementById('velocityNote');if(note)note.textContent=!velocityVisible?'':hasRates?'Vitesse indicative entre mesures · interruptions : grands intervalles':'Vitesse disponible après 4 mesures sur au moins 15 min dans une phase.';
+  const note=document.getElementById('velocityNote');if(note)note.textContent=!velocityVisible?'':hasRates?'Vitesse lissée sur le temps · aucune estimation dans les grands gaps':'Vitesse indisponible : mesures insuffisantes sur les plages continues.';
   // The oven setpoint is an event/context variable, not a core temperature: never let it flatten the measured curve.
   const temps=visible.map(p=>p.temperature).concat([Number(c.targetTemperature),a.projection]).filter(Number.isFinite);let ymin=Math.min(...temps),ymax=Math.max(...temps);let pad=Math.max(4,(ymax-ymin)*.14);ymin=Math.floor((ymin-pad)/5)*5;ymax=Math.ceil((ymax+pad)/5)*5;if(ymax-ymin<15)ymax=ymin+15;
   const mx=t=>ml+(t-start)/(end-start||1)*pw,my=v=>mt+(ymax-v)/(ymax-ymin)*ph;
