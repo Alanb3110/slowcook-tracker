@@ -157,4 +157,29 @@ test('390 px chart uses a right rate axis and its toggle hides that axis',()=>{
   assert.ok(a.eta);
 });
 
+test('visible rate runs join only with dim dashed visual bridges across a gap',()=>{
+  const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8'),inline=html.match(/<script>\s*([\s\S]*?)<\/script>/)?.[1];
+  const bridgePaths=[];let currentPath=[],dash=[];
+  const ctx={scale(){},clearRect(){},fillText(){},beginPath(){currentPath=[];},moveTo(x,y){currentPath.push([x,y]);},lineTo(x,y){currentPath.push([x,y]);},
+    stroke(){if(this.strokeStyle==='rgba(100,210,255,.5)')bridgePaths.push({dash:[...dash],path:[...currentPath]});},
+    save(){},restore(){},setLineDash(v){dash=v;},arc(){},fill(){},rect(){},clip(){}};
+  const note={textContent:''},canvas={getBoundingClientRect(){return {width:390,height:270};},getContext(){return ctx;}},noop={classList:{add(){},remove(){}},addEventListener(){},innerHTML:''};
+  const context={console,Date,Math,JSON,Number,Set,URLSearchParams,location:{search:''},navigator:{},localStorage:{getItem(){return null;},setItem(){}},
+    document:{getElementById(id){return id==='chart'?canvas:id==='velocityNote'?note:noop;},addEventListener(){}},
+    window:{addEventListener(){},TemperatureAnalysis:A,devicePixelRatio:2},TemperatureAnalysis:A,requestAnimationFrame(){}};
+  vm.createContext(context);vm.runInContext(inline,context);
+  const c=cooking([0,10,20,30,40,50,141,171],(t,i)=>[64,66,68,70,73,77,80,84][i]);
+  const points=A.prepare(c),acq=A.acquisition(points,points.at(-1).timeMs),phase={startIndex:0,endIndex:7,startMs:points[0].timeMs,endMs:points.at(-1).timeMs,points};
+  context.c=c;context.a={all:points,phases:[phase],acq,projection:null,setpoint:null};
+  vm.runInContext('chartRangeMinutes=360;drawChart(c,a)',context);
+  assert.equal(bridgePaths.length,1);
+  assert.deepEqual(bridgePaths[0].dash,[4,6]);
+  assert.equal(bridgePaths[0].path.length,2);
+  const view=vm.runInContext('chartView',context),toX=t=>42+(t-view.start)/(view.end-view.start)*(390-42-49);
+  assert.ok(Math.abs(bridgePaths[0].path[0][0]-toX(points[5].timeMs))<1e-6);
+  assert.ok(Math.abs(bridgePaths[0].path[1][0]-toX(points[6].timeMs))<1e-6);
+  assert.match(note.textContent,/pointillés.*vitesse inconnue/);
+  assert.ok(bridgePaths.every(s=>s.path.every(([x,y])=>Number.isFinite(x)&&Number.isFinite(y))));
+});
+
 test.after(()=>{console.log('DATASET_REPORT '+JSON.stringify(reports));});

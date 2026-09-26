@@ -47,7 +47,12 @@ the radius. Reweight large fit residuals twice with
 Require at least 12 min of supporting measurements. A run of exactly two
 points spanning at least 15 min uses their interval-average slope instead.
 Short isolated pairs cannot cause a large plotted derivative by themselves.
-The rate stops at gaps and phase boundaries and never extrapolates.
+The rate stops at gaps and phase boundaries and never extrapolates. For visual
+continuity alone, a thin, dim dashed straight join connects the last rate of
+one estimated run to the first rate of the next. The joined interval has no
+estimated rate: the line is an explicit visual convention, not interpolation
+for analysis, and it has no effect on the right-axis limits or the ETA. The
+mobile chart labels these dashed joins as periods of unknown rate.
 This is a time-based local linear smoother inspired by Cleveland's robust
 locally weighted regression (DOI: 10.1080/01621459.1979.10481038); the
 specific window and residual thresholds here are application heuristics,

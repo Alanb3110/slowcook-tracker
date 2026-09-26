@@ -80,7 +80,7 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand">CuissonTracker <small>v3.2.2</small></div>
+      <div class="brand">CuissonTracker <small>v3.2.3</small></div>
       <button class="icon-btn" id="historyTopBtn" aria-label="Historique">☰</button>
     </header>
     <main id="main"></main>
@@ -102,10 +102,10 @@
 <script>
 'use strict';
 
-// CuissonTracker Web v3.2.2 — local phase analysis v4.2.2
+// CuissonTracker Web v3.2.3 — local phase analysis v4.2.2
 // Data schema kept compatible with the Scriptable schema v5.
 
-const APP_VERSION = '3.2.2';
+const APP_VERSION = '3.2.3';
 const ANALYSIS_VERSION = 'web-4.2.2';
 const SCHEMA_VERSION = 5;
 const STORAGE_KEY = 'cuissonTracker.state.v5';
@@ -226,7 +226,7 @@ function render(){
       <div class="stat"><div class="stat-label">Qualité</div><div class="stat-value"><span class="quality-dot" style="background:${qualityColor(a.quality.key)}"></span>${a.quality.label}</div><div class="stat-detail">${escapeHtml(a.quality.detail)}</div></div>
     </section>
     ${a.warnings.length?`<section class="card warning" role="status">⚠ ${escapeHtml(a.warnings.join(' · '))}</section>`:''}
-    <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-legend"><span class="temp-key">Température</span><button id="velocityToggle" type="button" class="velocity-toggle ${velocityVisible?'active':''}" aria-pressed="${velocityVisible}" onclick="toggleVelocity()"><span class="velocity-key">Vitesse °C/h</span></button></div><div class="chart-wrap"><canvas id="chart" role="img" aria-label="Température du cœur et vitesse historique lissée entre les mesures"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div><div class="chart-note" id="velocityNote"></div></section>
+    <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-legend"><span class="temp-key">Température</span><button id="velocityToggle" type="button" class="velocity-toggle ${velocityVisible?'active':''}" aria-pressed="${velocityVisible}" onclick="toggleVelocity()"><span class="velocity-key">Vitesse °C/h</span></button></div><div class="chart-wrap"><canvas id="chart" role="img" aria-label="Température du cœur et vitesse historique lissée ; les pointillés relient les portions sans estimation de vitesse"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div><div class="chart-note" id="velocityNote"></div></section>
     <section class="card analysis-details"><details><summary>Détails de l’analyse</summary>${analysisDetailsHtml(a)}</details></section>
     <section class="card"><div class="section-head"><div class="section-title">Dernières mesures</div><button class="section-action" onclick="openMeasurements()">Tout voir</button></div>${recentMeasurementsHtml(c)}</section>`;
   requestAnimationFrame(()=>drawChart(c,a));
@@ -244,7 +244,7 @@ function drawChart(c,a){
   const rateSegments=velocityVisible?TemperatureAnalysis.rateCurve(a.phases,a.acq).filter(s=>s.samples.at(-1).timeMs>=start&&s.samples[0].timeMs<=end):[];
   const rateValues=rateSegments.flatMap(s=>s.samples.map(p=>p.rateCPerHour));const hasRates=rateValues.length>0;if(hasRates){mt=22;ph=h-mt-mb;}
   const mr=hasRates?49:10,pw=w-ml-mr;
-  const note=document.getElementById('velocityNote');if(note)note.textContent=!velocityVisible?'':hasRates?'Vitesse lissée sur le temps · aucune estimation dans les grands gaps':'Vitesse indisponible : mesures insuffisantes sur les plages continues.';
+  const note=document.getElementById('velocityNote');if(note)note.textContent=!velocityVisible?'':hasRates?'Vitesse lissée · pointillés : liaison visuelle, vitesse inconnue':'Vitesse indisponible : mesures insuffisantes sur les plages continues.';
   // The oven setpoint is an event/context variable, not a core temperature: never let it flatten the measured curve.
   const temps=visible.map(p=>p.temperature).concat([Number(c.targetTemperature),a.projection]).filter(Number.isFinite);let ymin=Math.min(...temps),ymax=Math.max(...temps);let pad=Math.max(4,(ymax-ymin)*.14);ymin=Math.floor((ymin-pad)/5)*5;ymax=Math.ceil((ymax+pad)/5)*5;if(ymax-ymin<15)ymax=ymin+15;
   const mx=t=>ml+(t-start)/(end-start||1)*pw,my=v=>mt+(ymax-v)/(ymax-ymin)*ph;
@@ -259,7 +259,17 @@ function drawChart(c,a){
   for(const s of history.filter(s=>s.phaseIndex===a.phases.length-1&&!s.boundary)){ctx.strokeStyle='#30d158';ctx.setLineDash(s.gap?[4,5]:[]);ctx.beginPath();s.samples.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),my(p.temperature)):ctx.moveTo(mx(p.timeMs),my(p.temperature)));ctx.stroke();}ctx.restore();
   ctx.fillStyle='#f5f5f7';for(const p of visible){ctx.beginPath();ctx.arc(mx(p.timeMs),my(p.temperature),3.2,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#0a84ff';ctx.lineWidth=2;ctx.stroke();}
   if(Number.isFinite(a.projection)){ctx.save();ctx.setLineDash([4,5]);ctx.strokeStyle='#30d158';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(mx(lastTime),my(pts.at(-1).temperature));ctx.lineTo(mx(lastTime+15*60000),my(a.projection));ctx.stroke();ctx.restore();}
-  if(hasRates){ctx.save();ctx.beginPath();ctx.rect(ml,mt,pw,ph);ctx.clip();ctx.strokeStyle='#64d2ff';ctx.lineWidth=2;for(const segment of rateSegments){ctx.beginPath();segment.samples.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),ry(p.rateCPerHour)):ctx.moveTo(mx(p.timeMs),ry(p.rateCPerHour)));ctx.stroke();}const last=rateSegments.at(-1).samples.at(-1);if(last.timeMs===lastTime){ctx.fillStyle='#64d2ff';ctx.beginPath();ctx.arc(mx(last.timeMs),ry(last.rateCPerHour),3,0,Math.PI*2);ctx.fill();}ctx.restore();}
+  if(hasRates){ctx.save();ctx.beginPath();ctx.rect(ml,mt,pw,ph);ctx.clip();
+    // Link separate estimated runs only for visual continuity. No rate is inferred inside a gap or across a phase boundary.
+    ctx.strokeStyle='rgba(100,210,255,.5)';ctx.lineWidth=1.6;ctx.setLineDash([4,6]);
+    for(let i=1;i<rateSegments.length;i++){
+      const left=rateSegments[i-1].samples.at(-1),right=rateSegments[i].samples[0];
+      if(right.timeMs<=left.timeMs)continue;
+      ctx.beginPath();ctx.moveTo(mx(left.timeMs),ry(left.rateCPerHour));ctx.lineTo(mx(right.timeMs),ry(right.rateCPerHour));ctx.stroke();
+    }
+    ctx.setLineDash([]);ctx.strokeStyle='#64d2ff';ctx.lineWidth=2;
+    for(const segment of rateSegments){ctx.beginPath();segment.samples.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),ry(p.rateCPerHour)):ctx.moveTo(mx(p.timeMs),ry(p.rateCPerHour)));ctx.stroke();}
+    const last=rateSegments.at(-1).samples.at(-1);if(last.timeMs===lastTime){ctx.fillStyle='#64d2ff';ctx.beginPath();ctx.arc(mx(last.timeMs),ry(last.rateCPerHour),3,0,Math.PI*2);ctx.fill();}ctx.restore();}
   chartView={start,end,ymin,ymax,rateRange:hasRates?[rmin,rmax]:null};
 }
 function setChartRange(v){chartRangeMinutes=v;render();}
