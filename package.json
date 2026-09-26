@@ -1,0 +1,9 @@
+{
+  "name": "cuisson-tracker",
+  "private": true,
+  "version": "3.1.0",
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "build": "node scripts/build.mjs"
+  }
+}

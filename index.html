@@ -37,7 +37,7 @@
     button{border:0;color:inherit}
     .app{max-width:760px;margin:0 auto;padding:0 14px}
     .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 2px 12px;position:sticky;top:var(--safe-top);z-index:10;background:linear-gradient(var(--bg) 80%,transparent)}
-    .brand{font-size:22px;font-weight:800;letter-spacing:-.02em}
+    .brand{font-size:22px;font-weight:800;letter-spacing:-.02em}.brand small{font-size:11px;color:var(--muted);font-weight:600;vertical-align:middle}
     .icon-btn{width:42px;height:42px;border-radius:14px;background:var(--surface2);display:grid;place-items:center;font-size:20px;border:1px solid var(--line)}
     .card{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:16px;margin-bottom:12px;box-shadow:0 12px 40px rgba(0,0,0,.18)}
     .hero{padding:18px}
@@ -72,13 +72,14 @@
     .history-item{background:var(--surface2);border:1px solid var(--line);border-radius:15px;padding:13px;margin-bottom:8px}.history-top{display:flex;justify-content:space-between;gap:10px}.history-title{font-weight:730}.history-sub{color:var(--muted);font-size:12px;margin-top:4px}.history-actions{display:flex;gap:7px;margin-top:10px}.history-actions button{flex:1}
     .toast{position:fixed;left:50%;bottom:calc(var(--safe-bottom) + 92px);transform:translateX(-50%) translateY(15px);background:#2b2e35;color:#fff;border:1px solid var(--line);padding:10px 14px;border-radius:13px;font-size:13px;opacity:0;pointer-events:none;transition:.2s;z-index:200;white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
     .hidden{display:none!important}.sep{height:1px;background:var(--line);margin:14px 0}.small{font-size:12px;color:var(--muted)}
+    .analysis-details{font-size:12px;color:var(--muted);line-height:1.55}.analysis-details summary{cursor:pointer;color:var(--blue);padding:3px 0}.analysis-details table{width:100%;border-collapse:collapse;margin-top:8px}.analysis-details td,.analysis-details th{padding:5px;text-align:left;border-bottom:1px solid var(--line)}.analysis-details td:last-child{text-align:right}.warning{color:var(--orange)}
     @media (min-width:650px){.stat-grid{grid-template-columns:repeat(4,1fr)}.sheet{border-radius:26px;margin-bottom:18px;border-bottom:1px solid var(--line)}.modal{align-items:center}.chart-wrap{height:330px}}
   </style>
 </head>
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand">CuissonTracker</div>
+      <div class="brand">CuissonTracker <small>v3.1.0</small></div>
       <button class="icon-btn" id="historyTopBtn" aria-label="Historique">☰</button>
     </header>
     <main id="main"></main>
@@ -96,37 +97,20 @@
   <div class="toast" id="toast"></div>
   <input id="fileInput" type="file" accept="application/json,.json" hidden>
 
+<script src="analysis.js"></script>
 <script>
 'use strict';
 
-// CuissonTracker Web v3.0.0 — GitHub Pages / PWA
+// CuissonTracker Web v3.1.0 — local phase analysis v4.1
 // Data schema kept compatible with the Scriptable schema v5.
 
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
+const ANALYSIS_VERSION = 'web-4.1';
 const SCHEMA_VERSION = 5;
 const STORAGE_KEY = 'cuissonTracker.state.v5';
 const MIN_TEMP_C = -20;
 const MAX_TEMP_C = 350;
 const DEFAULT_TARGET_C = 93;
-const TREND_WINDOW_MINUTES = 45;
-const TREND_MIN_POINTS = 3;
-const TREND_MIN_SPAN_MINUTES = 15;
-const RECENT_SLOPE_WINDOW_MINUTES = 20;
-const RECENT_SLOPE_MIN_POINTS = 3;
-const RECENT_SLOPE_MIN_SPAN_MINUTES = 8;
-const DATA_STALE_MIN_MINUTES = 30;
-const DATA_STALE_INTERVAL_MULTIPLIER = 2.5;
-const DATA_STALE_MAX_MINUTES = 90;
-const DATA_GAP_MIN_MINUTES = 30;
-const DATA_GAP_INTERVAL_MULTIPLIER = 3.5;
-const DATA_GAP_MAX_MINUTES = 120;
-const STABLE_MIN_TREND_R2 = 0.50;
-const STABLE_GOOD_TREND_R2 = 0.75;
-const ETA_MIN_POINTS = 4;
-const ETA_MIN_SPAN_MINUTES = 20;
-const ETA_MIN_R2 = 0.75;
-const ETA_MAX_HOURS = 8;
-const STABLE_ETA_MIN_HALF_RANGE_MINUTES = 12;
 
 const FOOD_GROUPS = [
   ['Bœuf',['Jarret de bœuf','Paleron de bœuf','Basse-côte de bœuf','Poitrine / brisket de bœuf','Rôti de bœuf','Côte / entrecôte de bœuf']],
@@ -200,83 +184,17 @@ function escapeHtml(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;',
 function makeId(prefix='id'){return `${Date.now()}-${prefix}-${Math.random().toString(36).slice(2,8)}`;}
 function safeName(s){return String(s||'cuisson').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,100)||'cuisson';}
 
-function sortedPoints(c){return (c?.measurements||[]).map((m,i)=>({index:i,timeMs:new Date(m.timestamp).getTime(),temperature:Number(m.temperature),timestamp:m.timestamp})).filter(p=>Number.isFinite(p.timeMs)&&Number.isFinite(p.temperature)).sort((a,b)=>a.timeMs-b.timeMs);}
-function median(arr){if(!arr.length)return null;const a=[...arr].sort((x,y)=>x-y),m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2;}
-function analyzeAcquisition(points,nowMs=Date.now()){
-  const intervals=[];for(let i=1;i<points.length;i++)intervals.push((points[i].timeMs-points[i-1].timeMs)/60000);
-  const base=median(intervals.slice(-12).filter(v=>v>0&&Number.isFinite(v)))||12;
-  const staleThreshold=clamp(base*DATA_STALE_INTERVAL_MULTIPLIER,DATA_STALE_MIN_MINUTES,DATA_STALE_MAX_MINUTES);
-  const gapThreshold=clamp(base*DATA_GAP_INTERVAL_MULTIPLIER,DATA_GAP_MIN_MINUTES,DATA_GAP_MAX_MINUTES);
-  const gaps=[];let segStart=0;
-  for(let i=1;i<points.length;i++){
-    const g=(points[i].timeMs-points[i-1].timeMs)/60000;
-    if(g>gapThreshold){gaps.push({beforeIndex:i,minutes:g});segStart=i;}
-  }
-  const age=points.length?(nowMs-points.at(-1).timeMs)/60000:Infinity;
-  return {baselineIntervalMinutes:base,staleThresholdMinutes:staleThreshold,gapThresholdMinutes:gapThreshold,isStale:age>staleThreshold,ageMinutes:age,gaps,latestSegment:points.slice(segStart)};
-}
-function fitLinear(points){
-  if(points.length<2)return null;
-  const origin=points[0].timeMs;const xs=points.map(p=>(p.timeMs-origin)/3600000),ys=points.map(p=>p.temperature);
-  const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;
-  let sxx=0,sxy=0;for(let i=0;i<xs.length;i++){sxx+=(xs[i]-mx)**2;sxy+=(xs[i]-mx)*(ys[i]-my);}if(sxx<1e-12)return null;
-  const slope=sxy/sxx,intercept=my-slope*mx;let sse=0,sst=0;for(let i=0;i<xs.length;i++){const e=ys[i]-(intercept+slope*xs[i]);sse+=e*e;sst+=(ys[i]-my)**2;}
-  const r2=sst>1e-12?1-sse/sst:1;const rmse=Math.sqrt(sse/Math.max(1,xs.length-2));
-  return {originMs:origin,interceptC:intercept,slopeCPerHour:slope,rSquared:r2,rmseC:rmse,pointCount:points.length};
-}
-function fitRecent(points){if(points.length<RECENT_SLOPE_MIN_POINTS)return null;const last=points.at(-1).timeMs,cut=last-RECENT_SLOPE_WINDOW_MINUTES*60000,p=points.filter(x=>x.timeMs>=cut);if(p.length<RECENT_SLOPE_MIN_POINTS)return null;if((p.at(-1).timeMs-p[0].timeMs)/60000<RECENT_SLOPE_MIN_SPAN_MINUTES)return null;return fitLinear(p);}
 function getSetpointAtTime(c,timeMs){
-  let s=Number(c.initialCookerSetpointC);if(!Number.isFinite(s))s=Number(c.cookerSetpointC);
+  let s=c.initialCookerSetpointC==null?NaN:Number(c.initialCookerSetpointC);
+  if(!Number.isFinite(s))s=c.cookerSetpointC==null?NaN:Number(c.cookerSetpointC);
   const ev=[...(c.events||[])].filter(e=>e.type==='setpointChanged'&&new Date(e.timestamp).getTime()<=timeMs).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
   for(const e of ev){const n=Number(e.details?.toC);if(Number.isFinite(n))s=n;}
   return Number.isFinite(s)?s:null;
 }
-function fitExponential(points,setpoint,target){
-  if(points.length<5)return null;
-  const t0=points[0].timeMs,last=points.at(-1).temperature,maxObs=Math.max(...points.map(p=>p.temperature));
-  const low=Math.max(maxObs+1,Number.isFinite(target)?target+0.5:maxObs+1);
-  const high=Math.max(low+15,Number.isFinite(setpoint)?setpoint+25:low+80);
-  let best=null;
-  for(let j=0;j<=70;j++){
-    const tinf=low+(high-low)*j/70;
-    const transformed=[];let valid=true;
-    for(const p of points){const d=tinf-p.temperature;if(d<=0){valid=false;break;}transformed.push({timeMs:p.timeMs,temperature:Math.log(d)});}
-    if(!valid)continue;
-    const lin=fitLinear(transformed);if(!lin)continue;
-    const k=-lin.slopeCPerHour;if(!(k>0.002))continue;
-    const A=Math.exp(lin.interceptC);let sse=0,sst=0;const mean=points.reduce((s,p)=>s+p.temperature,0)/points.length;
-    for(const p of points){const h=(p.timeMs-t0)/3600000,pred=tinf-A*Math.exp(-k*h);sse+=(p.temperature-pred)**2;sst+=(p.temperature-mean)**2;}
-    const r2=sst>1e-12?1-sse/sst:1,rmse=Math.sqrt(sse/Math.max(1,points.length-2));
-    if(!best||sse<best.sse)best={tInfC:tinf,A,kPerHour:k,rSquared:r2,rmseC:rmse,sse,originMs:t0};
-  }
-  return best;
-}
-function stableQuality(points,linear,acq){
-  if(!points.length)return {key:'none',label:'Aucune donnée',detail:'Ajoute une première température.'};
-  if(acq.isStale)return {key:'stale',label:'Mesure ancienne',detail:`Dernière mesure il y a ${fmtDurationMin(acq.ageMinutes)}.`};
-  if(!linear)return {key:'limited',label:'Données limitées',detail:'Il faut davantage de mesures espacées dans le temps.'};
-  const span=(points.at(-1).timeMs-points[0].timeMs)/60000;
-  if(points.length>=5&&span>=30&&linear.rSquared>=STABLE_GOOD_TREND_R2)return {key:'good',label:'Données cohérentes',detail:`${points.length} mesures sur ${Math.round(span)} min.`};
-  if(points.length>=TREND_MIN_POINTS&&span>=TREND_MIN_SPAN_MINUTES&&linear.rSquared>=STABLE_MIN_TREND_R2)return {key:'usable',label:'Tendance utilisable',detail:`${points.length} mesures · variabilité possible.`};
-  return {key:'limited',label:'Tendance instable',detail:'Continue les mesures avant d’interpréter la pente.'};
-}
 function analyzeCooking(c){
-  const all=sortedPoints(c),acq=analyzeAcquisition(all,c.endedAt?new Date(c.endedAt).getTime():Date.now());
-  if(!all.length)return {all,points:[],acq,linear:null,recent:null,exponential:null,quality:stableQuality([],null,acq),slope:null,projection:null,eta:null};
-  const last=all.at(-1),windowStart=last.timeMs-TREND_WINDOW_MINUTES*60000;const points=acq.latestSegment.filter(p=>p.timeMs>=windowStart);
-  const span=points.length>1?(points.at(-1).timeMs-points[0].timeMs)/60000:0;
-  const linear=points.length>=TREND_MIN_POINTS&&span>=TREND_MIN_SPAN_MINUTES?fitLinear(points):null;
-  const recent=linear?fitRecent(points):null;const trend=recent||linear;const quality=stableQuality(points,linear,acq);
-  const setpoint=getSetpointAtTime(c,last.timeMs);const exponential=points.length>=5&&span>=25?fitExponential(points,setpoint,Number(c.targetTemperature)):null;
-  const slope=trend?.slopeCPerHour??null;
-  let projection=null;if(Number.isFinite(slope)&&['good','usable'].includes(quality.key)){projection=last.temperature+slope*.25;if(Number.isFinite(setpoint))projection=Math.min(projection,setpoint);projection=clamp(projection,MIN_TEMP_C,MAX_TEMP_C);}
-  let eta=null;const target=Number(c.targetTemperature),delta=target-last.temperature;
-  if(!c.endedAt&&!acq.isStale&&delta>0&&linear&&points.length>=ETA_MIN_POINTS&&span>=ETA_MIN_SPAN_MINUTES&&linear.rSquared>=ETA_MIN_R2&&Number.isFinite(slope)&&slope>.1){
-    const linHours=delta/slope;let estimates=[];if(linHours>0&&linHours<=ETA_MAX_HOURS)estimates.push({h:linHours,w:Math.max(.1,linear.rSquared)});
-    if(exponential&&exponential.rSquared>=.5&&target<exponential.tInfC){const ratio=(exponential.tInfC-target)/exponential.A;if(ratio>0&&ratio<1){const targetFromOrigin=-Math.log(ratio)/exponential.kPerHour;const nowFromOrigin=(last.timeMs-exponential.originMs)/3600000;const h=targetFromOrigin-nowFromOrigin;if(h>0&&h<=ETA_MAX_HOURS)estimates.push({h,w:Math.max(.1,exponential.rSquared)});}}
-    if(estimates.length){const h=estimates.reduce((s,e)=>s+e.h*e.w,0)/estimates.reduce((s,e)=>s+e.w,0);const center=last.timeMs+h*3600000;const residualMin=(Math.max(linear.rmseC,0.4)/Math.max(slope,.2))*60;const modelSpread=estimates.length>1?Math.abs(estimates[0].h-estimates[1].h)*60/2:0;const half=Math.max(STABLE_ETA_MIN_HALF_RANGE_MINUTES,residualMin*1.5,modelSpread);eta={estimatedAtMs:center,earliestAtMs:center-half*60000,latestAtMs:center+half*60000,hours:h};}
-  }
-  return {all,points,acq,linear,recent,exponential,quality,slope,projection,eta,setpoint};
+  const now=c.endedAt?new Date(c.endedAt).getTime():Date.now();
+  const analysis=TemperatureAnalysis.analyze(c,now);
+  return {...analysis,setpoint:analysis.all.length?getSetpointAtTime(c,analysis.all.at(-1).timeMs):null};
 }
 function trendLabel(s){if(!Number.isFinite(s))return 'Tendance indisponible';if(s>8)return 'Montée rapide';if(s>2)return 'Montée';if(s>.5)return 'Montée lente';if(s>=-.5)return 'Quasi stable';return 'Température en baisse';}
 function qualityColor(q){return q==='good'?'#30d158':q==='usable'?'#0a84ff':q==='stale'?'#ff9f0a':'#8e8e93';}
@@ -289,8 +207,9 @@ function render(){
   const meta=[c.foodType,Number.isFinite(Number(c.massKg))?`${fmtNum(c.massKg)} kg`:null,Number.isFinite(Number(c.maxThicknessCm))?`ép. ${fmtNum(c.maxThicknessCm)} cm`:null].filter(Boolean).join(' · ');
   let etaTitle='Pas encore d’estimation',etaDetail='Ajoute plusieurs mesures pour caractériser la tendance.';
   if(Number.isFinite(current)&&current>=target){etaTitle='Cible atteinte';etaDetail=`${fmtTemp(current)} °C mesurés pour ${fmtTemp(target)} °C ciblés.`;}
-  else if(a.quality.key==='stale'){etaTitle='Prévision suspendue';etaDetail='Ajoute une nouvelle mesure.';}
-  else if(a.eta){etaTitle=fmtClock(new Date(a.eta.estimatedAtMs));etaDetail=`Fourchette ${fmtClock(new Date(a.eta.earliestAtMs))}–${fmtClock(new Date(a.eta.latestAtMs))}`;}
+  else if(a.eta){etaTitle=`~${fmtClock(new Date(a.eta.earliestAtMs))}–${fmtClock(new Date(a.eta.latestAtMs))}`;etaDetail=`Confiance ${a.confidence==='high'?'élevée':a.confidence==='medium'?'moyenne':'faible'}.`;}
+  else if(a.quality.key==='stale'){etaTitle='Prévision suspendue';etaDetail='Nouvelle mesure nécessaire pour actualiser l’ETA.';}
+  else if(a.reason){etaTitle='Projection incertaine';etaDetail=a.reason;}
   const setpoint=Number.isFinite(a.setpoint)?`${fmtTemp(a.setpoint)} °C`:'—';
   main.innerHTML=`
     <section class="card hero">
@@ -299,30 +218,37 @@ function render(){
       <div class="progress"><div style="width:${pct}%"></div></div>
     </section>
     <section class="stat-grid">
-      <div class="stat"><div class="stat-label">Tendance</div><div class="stat-value">${trendLabel(a.slope)}</div><div class="stat-detail">${Number.isFinite(a.slope)?`${a.slope>=0?'+':''}${fmtTemp(a.slope)} °C/h`:'Mesures insuffisantes'}</div></div>
-      <div class="stat"><div class="stat-label">Dans 15 min</div><div class="stat-value">${Number.isFinite(a.projection)?`${fmtTemp(a.projection)} °C`:'—'}</div><div class="stat-detail">Projection locale, non garantie.</div></div>
+      <div class="stat"><div class="stat-label">Tendance</div><div class="stat-value">${trendLabel(a.slope)}</div><div class="stat-detail">${Number.isFinite(a.slope)?`${a.slope>=0?'+':''}${fmtTemp(a.slope)} °C/h · ${modelLabel(a.activePhase?.model?.family)}`:'Mesures insuffisantes'}</div></div>
+      <div class="stat"><div class="stat-label">15 min après mesure</div><div class="stat-value">${Number.isFinite(a.projection)?`${fmtTemp(a.projection)} °C`:'—'}</div><div class="stat-detail">Projection du régime actif.</div></div>
       <div class="stat"><div class="stat-label">Arrivée cible</div><div class="stat-value">${etaTitle}</div><div class="stat-detail">${etaDetail}</div></div>
       <div class="stat"><div class="stat-label">Qualité</div><div class="stat-value"><span class="quality-dot" style="background:${qualityColor(a.quality.key)}"></span>${a.quality.label}</div><div class="stat-detail">${escapeHtml(a.quality.detail)}</div></div>
     </section>
+    ${a.warnings.length?`<section class="card warning" role="status">⚠ ${escapeHtml(a.warnings.join(' · '))}</section>`:''}
     <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-wrap"><canvas id="chart"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div></section>
+    <section class="card analysis-details"><details><summary>Détails de l’analyse</summary>${analysisDetailsHtml(a)}</details></section>
     <section class="card"><div class="section-head"><div class="section-title">Dernières mesures</div><button class="section-action" onclick="openMeasurements()">Tout voir</button></div>${recentMeasurementsHtml(c)}</section>`;
   requestAnimationFrame(()=>drawChart(c,a));
 }
 function emptyHtml(){return `<section class="card empty"><div class="empty-icon">🌡️</div><h2>Aucune cuisson active</h2><p>Démarre une cuisson, puis ajoute les températures au fur et à mesure. L’heure est enregistrée automatiquement.</p><button class="primary" onclick="openNewCooking()">Démarrer une cuisson</button><button class="secondary" style="width:100%;margin-top:10px" onclick="openHistory()">Historique et données</button></section>`;}
+function modelLabel(f){return {linear:'Linéaire',quadratic:'Quadratique',logarithmic:'Logarithmique',exponential:'Exponentiel'}[f]||'Régime à confirmer';}
+function analysisDetailsHtml(a){return `<div>${a.phases.length} phase(s) · régime actif depuis ${a.activePhase?fmtClock(new Date(a.activePhase.startMs)):'—'} · ${a.activePhase?.points.length||0} mesures.</div><table><thead><tr><th>Phase</th><th>Modèle</th><th>RMSE / préd.</th></tr></thead><tbody>${a.phases.map((p,i)=>`<tr><td>${i+1} · ${fmtClock(new Date(p.startMs))}</td><td>${modelLabel(p.model?.family)}</td><td>${p.model?`${fmtNum(p.model.rmseC)} / ${Number.isFinite(p.model.predictiveRmseC)?fmtNum(p.model.predictiveRmseC):'—'} °C`:'—'}</td></tr>`).join('')}</tbody></table><div>Autres modèles : ${a.activePhase?.candidates.map(m=>`${modelLabel(m.family)} (${m.rejectedReason||'retenu'})`).join(' · ')||'—'}</div><div>Intervalle médian ${fmtNum(a.acq.baselineIntervalMinutes,1)} min · âge ${fmtNum(a.acq.ageMinutes,1)} min · grands gaps ${a.acq.gaps.length}.</div>`;}
 function recentMeasurementsHtml(c){const ms=[...c.measurements].slice(-5).reverse();if(!ms.length)return `<div class="small">Aucune mesure pour le moment.</div>`;return `<div class="measure-list">${ms.map((m)=>`<div class="measure-item"><div class="measure-time">${fmtClock(new Date(m.timestamp))}</div><div><div class="measure-temp">${fmtTemp(m.temperature)} °C</div>${m.comment?`<div class="small">${escapeHtml(m.comment)}</div>`:''}</div><button class="mini-btn" onclick="editMeasurementByTimestamp('${encodeURIComponent(m.timestamp)}')">Modifier</button></div>`).join('')}</div>`;}
 
 function drawChart(c,a){
   const canvas=document.getElementById('chart');if(!canvas)return;const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);const w=rect.width,h=rect.height,ml=42,mr=10,mt=12,mb=30,pw=w-ml-mr,ph=h-mt-mb;ctx.clearRect(0,0,w,h);
   const pts=a.all;if(!pts.length){ctx.fillStyle='#8e8e93';ctx.font='13px -apple-system';ctx.textAlign='center';ctx.fillText('Ajoute une mesure pour afficher la courbe',w/2,h/2);return;}
-  const end=pts.at(-1).timeMs;let start=chartRangeMinutes?end-chartRangeMinutes*60000:Math.min(new Date(c.startTime).getTime(),pts[0].timeMs);const visible=pts.filter(p=>p.timeMs>=start);if(visible.length===1)start=Math.min(start,visible[0].timeMs-30*60000);
-  const temps=visible.map(p=>p.temperature).concat([Number(c.targetTemperature)]).filter(Number.isFinite);const setpoints=[a.setpoint].filter(Number.isFinite);temps.push(...setpoints);let ymin=Math.min(...temps),ymax=Math.max(...temps);let pad=Math.max(4,(ymax-ymin)*.14);ymin=Math.floor((ymin-pad)/5)*5;ymax=Math.ceil((ymax+pad)/5)*5;if(ymax-ymin<15)ymax=ymin+15;
+  const lastTime=pts.at(-1).timeMs,end=lastTime+(Number.isFinite(a.projection)?15*60000:0);let start=chartRangeMinutes?lastTime-chartRangeMinutes*60000:Math.min(new Date(c.startTime).getTime(),pts[0].timeMs);const visible=pts.filter(p=>p.timeMs>=start);if(visible.length===1)start=Math.min(start,visible[0].timeMs-30*60000);
+  const temps=visible.map(p=>p.temperature).concat([Number(c.targetTemperature),a.projection]).filter(Number.isFinite);const setpoints=[a.setpoint].filter(Number.isFinite);temps.push(...setpoints);let ymin=Math.min(...temps),ymax=Math.max(...temps);let pad=Math.max(4,(ymax-ymin)*.14);ymin=Math.floor((ymin-pad)/5)*5;ymax=Math.ceil((ymax+pad)/5)*5;if(ymax-ymin<15)ymax=ymin+15;
   const mx=t=>ml+(t-start)/(end-start||1)*pw,my=v=>mt+(ymax-v)/(ymax-ymin)*ph;
   ctx.strokeStyle='rgba(255,255,255,.10)';ctx.lineWidth=1;ctx.fillStyle='#8e8e93';ctx.font='11px -apple-system';ctx.textAlign='right';ctx.textBaseline='middle';for(let i=0;i<=4;i++){const y=mt+ph*i/4,val=ymax-(ymax-ymin)*i/4;ctx.beginPath();ctx.moveTo(ml,y);ctx.lineTo(w-mr,y);ctx.stroke();ctx.fillText(`${Math.round(val)}°`,ml-6,y);}
   ctx.textAlign='center';ctx.textBaseline='top';for(let i=0;i<=3;i++){const t=start+(end-start)*i/3,x=mx(t);ctx.fillText(fmtClock(new Date(t)),x,h-mb+8);}
   const target=Number(c.targetTemperature);if(Number.isFinite(target)){ctx.save();ctx.setLineDash([6,5]);ctx.strokeStyle='#ff9f0a';ctx.beginPath();ctx.moveTo(ml,my(target));ctx.lineTo(w-mr,my(target));ctx.stroke();ctx.restore();}
   const sp=a.setpoint;if(Number.isFinite(sp)&&sp>=ymin&&sp<=ymax){ctx.save();ctx.setLineDash([3,5]);ctx.strokeStyle='rgba(100,210,255,.6)';ctx.beginPath();ctx.moveTo(ml,my(sp));ctx.lineTo(w-mr,my(sp));ctx.stroke();ctx.restore();}
   for(const e of c.events||[]){const t=new Date(e.timestamp).getTime();if(t<start||t>end)continue;ctx.strokeStyle='rgba(191,90,242,.45)';ctx.beginPath();ctx.moveTo(mx(t),mt);ctx.lineTo(mx(t),mt+ph);ctx.stroke();}
+  for(const phase of a.phases.slice(1)){if(phase.startMs<start)continue;ctx.save();ctx.setLineDash([3,5]);ctx.strokeStyle='rgba(255,159,10,.55)';ctx.beginPath();ctx.moveTo(mx(phase.startMs),mt);ctx.lineTo(mx(phase.startMs),mt+ph);ctx.stroke();ctx.restore();}
   ctx.strokeStyle='#0a84ff';ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.lineCap='round';ctx.beginPath();visible.forEach((p,i)=>{const x=mx(p.timeMs),y=my(p.temperature);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();ctx.fillStyle='#f5f5f7';for(const p of visible){ctx.beginPath();ctx.arc(mx(p.timeMs),my(p.temperature),3.2,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#0a84ff';ctx.lineWidth=2;ctx.stroke();}
+  const active=a.activePhase?.points.filter(p=>p.timeMs>=start)||[];if(active.length>1){ctx.strokeStyle='#30d158';ctx.lineWidth=2.5;ctx.beginPath();active.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),my(p.temperature)):ctx.moveTo(mx(p.timeMs),my(p.temperature)));ctx.stroke();}
+  if(Number.isFinite(a.projection)){ctx.save();ctx.setLineDash([4,5]);ctx.strokeStyle='#30d158';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(mx(lastTime),my(pts.at(-1).temperature));ctx.lineTo(mx(lastTime+15*60000),my(a.projection));ctx.stroke();ctx.restore();}
   chartView={start,end,ymin,ymax};
 }
 function setChartRange(v){chartRangeMinutes=v;render();}
@@ -389,7 +315,7 @@ async function shareOrDownload(text,filename,mime='application/json'){
 }
 function exportState(){shareOrDownload(JSON.stringify(stateExportPayload(),null,2),`cuisson-tracker-backup-${new Date().toISOString().slice(0,10)}.json`);}
 function exportCookingJson(c){if(!c)return;closeModal();openModal(modalHtml('Exporter la cuisson',`<div class="menu-list"><button class="menu-item" onclick="downloadCookingJson()"><strong>JSON</strong><span>Toutes les données de la cuisson.</span></button><button class="menu-item" onclick="downloadCookingCsv()"><strong>CSV</strong><span>Mesures exploitables dans Excel, Python ou MATLAB.</span></button></div>`));window._exportCooking=c;}
-function downloadCookingJson(){const c=window._exportCooking;if(!c)return;shareOrDownload(JSON.stringify({schemaVersion:SCHEMA_VERSION,analysisVersion:'web-3.0',exportedAt:localISOString(new Date()),cooking:c,currentAnalysis:analyzeCooking(c)},null,2),`${safeName(c.name)}.json`);}
+function downloadCookingJson(){const c=window._exportCooking;if(!c)return;shareOrDownload(JSON.stringify({schemaVersion:SCHEMA_VERSION,analysisVersion:ANALYSIS_VERSION,exportedAt:localISOString(new Date()),cooking:c,currentAnalysis:analyzeCooking(c)},null,2),`${safeName(c.name)}.json`);}
 function downloadCookingCsv(){const c=window._exportCooking;if(!c)return;const start=new Date(c.startTime).getTime();const rows=[['timestamp','elapsed_min','temperature_C','comment']];for(const m of c.measurements||[])rows.push([m.timestamp,((new Date(m.timestamp).getTime()-start)/60000).toFixed(3),m.temperature,m.comment||'']);const csv=rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');shareOrDownload(csv,`${safeName(c.name)}.csv`,'text/csv;charset=utf-8');}
 
 document.getElementById('fileInput').addEventListener('change',async e=>{const f=e.target.files?.[0];e.target.value='';if(!f)return;try{const data=JSON.parse(await f.text());let incoming;if(data.activeCooking!==undefined||data.archivedCookings!==undefined)incoming=migrateState(data);else if(data.cooking){incoming=emptyState();incoming.archivedCookings=[data.cooking];incoming=migrateState(incoming);}else throw new Error('Format non reconnu');if(!confirm('Importer ce fichier remplacera les données locales actuelles. Continuer ?'))return;state=incoming;saveState();closeModal();render();toast('Import terminé');}catch(err){alert(`Import impossible : ${err.message}`);}});
