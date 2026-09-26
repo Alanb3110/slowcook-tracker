@@ -58,7 +58,7 @@ test('multi-regime complete cook and target crossing',()=>{
   const times=Array.from({length:33},(_,i)=>i*8),c=cooking(times,t=>t<=72?30+.4*t:t<=152?58.8+.12*(t-72):68.4+.32*(t-152),106.68,68);
   const a=check(c);reports.push(report('Full cook',a));assert.equal(a.phases.length,3);assert.ok(a.eta);assert.ok(a.eta.estimatedAtMs>Date.parse(c.measurements.at(-1).timestamp));
 });
-test('old v5 cooking import and v5 export stay compatible with analysis v4.1',()=>{
+test('old v5 cooking import and v5 export stay compatible with analysis v4.2',()=>{
   const d=require('./paleron-real-v5.json'),html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
   const inline=html.match(/<script>\s*([\s\S]*?)<\/script>/)?.[1];assert.ok(inline);
   const fakeElement=()=>({classList:{add(){},remove(){}},addEventListener(){},innerHTML:'',getBoundingClientRect(){return {width:390,height:270};}});
@@ -70,7 +70,51 @@ test('old v5 cooking import and v5 export stay compatible with analysis v4.1',()
   vm.runInContext('state=migrateState({activeCooking:incoming.cooking,archivedCookings:[],schemaVersion:5})',context);
   const exportData=vm.runInContext('stateExportPayload()',context);
   assert.equal(exportData.schemaVersion,5);assert.equal(exportData.activeCooking.measurements.length,18);
-  assert.equal(vm.runInContext('ANALYSIS_VERSION',context),'web-4.1.1');
+  assert.equal(vm.runInContext('ANALYSIS_VERSION',context),'web-4.2.0');
+});
+
+test('historical rate is derivative of a local fit, not finite differences or future ETA',()=>{
+  const c=cooking([0,2,5,17,18,27,40,65,67,85,101,130],t=>35+.3*t);
+  const a=check(c),segments=A.rateCurve(a.phases,a.acq);
+  assert.equal(a.phases.length,1);assert.equal(segments.length,c.measurements.length-1);
+  assert.ok(segments.every(s=>s.phaseIndex===0&&s.samples.every(p=>Math.abs(p.rateCPerHour-18)<1e-6)));
+  assert.equal(segments[0].samples[0].timeMs,Date.parse(c.measurements[0].timestamp));
+  assert.equal(segments.at(-1).samples.at(-1).timeMs,Date.parse(c.measurements.at(-1).timestamp));
+  const gap=check(cooking([0,8,16,24,32,40,48,56,64,72,130,138,146],t=>30+.25*t));
+  assert.ok(A.rateCurve(gap.phases,gap.acq).some(s=>s.gap));
+});
+test('exponential local rate slows, and phase changes do not join derivatives',()=>{
+  const exp=check(cooking(regular,t=>75-50*Math.exp(-t/60),80)),rates=A.rateCurve(exp.phases,exp.acq);
+  assert.ok(rates[0].samples[0].rateCPerHour>rates.at(-1).samples.at(-1).rateCPerHour);
+  const a=check(cooking(regular,t=>t<=72?30+.4*t:58.8+.09*(t-72)));
+  const segments=A.rateCurve(a.phases,a.acq);
+  assert.equal(a.phases.length,2);
+  assert.ok(segments.some(s=>s.phaseIndex===0));assert.ok(segments.some(s=>s.phaseIndex===1));
+  assert.ok(segments.every(s=>s.samples[0].timeMs>=a.phases[s.phaseIndex].startMs&&s.samples.at(-1).timeMs<=a.phases[s.phaseIndex].endMs));
+});
+test('sparse phases hide rate and real Paleron preserves its gap indication',()=>{
+  const sparse=check(cooking([0,5,12],t=>35+.3*t));assert.deepEqual(A.rateCurve(sparse.phases,sparse.acq),[]);
+  const d=require('./paleron-real-v5.json'),last=Date.parse(d.cooking.measurements.at(-1).timestamp),a=A.analyze(d.cooking,last+5*60000);
+  const segments=A.rateCurve(a.phases,a.acq);
+  assert.ok(segments.length);assert.ok(segments.some(s=>s.gap));
+  assert.ok(segments.every(s=>s.samples.at(-1).timeMs<=last));
+});
+test('390 px chart uses a right rate axis and its toggle hides that axis',()=>{
+  const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8'),inline=html.match(/<script>\s*([\s\S]*?)<\/script>/)?.[1];
+  const labels=[],button={pressed:null,classList:{toggle(){}},setAttribute(k,v){if(k==='aria-pressed')this.pressed=v;}},note={textContent:''};
+  const ctx={scale(){},clearRect(){},fillText(s){labels.push(s);},beginPath(){},moveTo(){},lineTo(){},stroke(){},save(){},restore(){},setLineDash(){},arc(){},fill(){},rect(){},clip(){}};
+  const canvas={width:0,height:0,getBoundingClientRect(){return {width:390,height:270};},getContext(){return ctx;}};
+  const noop={classList:{add(){},remove(){}},addEventListener(){},innerHTML:''};
+  const context={console,Date,Math,JSON,Number,Set,URLSearchParams,location:{search:''},navigator:{},localStorage:{getItem(){return null;},setItem(){}},
+    document:{getElementById(id){return id==='chart'?canvas:id==='velocityToggle'?button:id==='velocityNote'?note:noop;},addEventListener(){}},
+    window:{addEventListener(){},TemperatureAnalysis:A,devicePixelRatio:2},TemperatureAnalysis:A,requestAnimationFrame(){}};
+  vm.createContext(context);vm.runInContext(inline,context);
+  const c=cooking(regular,t=>30+.28*t),a=check(c);context.c=c;context.a=a;vm.runInContext('state.activeCooking=c',context);
+  vm.runInContext('drawChart(c,a)',context);
+  assert.ok(labels.includes('°C/h'));assert.ok(vm.runInContext('chartView.rateRange',context));
+  vm.runInContext('toggleVelocity()',context);
+  assert.equal(button.pressed,'false');assert.equal(vm.runInContext('chartView.rateRange',context),null);assert.equal(note.textContent,'');
+  assert.ok(a.eta);
 });
 
 test.after(()=>{console.log('DATASET_REPORT '+JSON.stringify(reports));});

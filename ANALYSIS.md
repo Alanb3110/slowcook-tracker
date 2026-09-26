@@ -1,8 +1,8 @@
-# Temperature analysis v4.1.1
+# Temperature analysis v4.2.0
 
 The recording schema stays at v5. Existing cooking exports import unchanged;
 `currentAnalysis` is derived data and ignored on import. Newly exported cooking
-files use `analysisVersion: "web-4.1.1"`. Units are milliseconds (timestamps),
+files use `analysisVersion: "web-4.2.0"`. Units are milliseconds (timestamps),
 hours (local regression axis), °C (temperature), and °C/h (derivative).
 
 1. Sort by timestamp and retain one observation per instant. Estimate normal
@@ -36,6 +36,12 @@ hours (local regression axis), °C (temperature), and °C/h (derivative).
 The chart draws measured points and historical straight-line joins, with
 detected phase boundaries and the active phase highlighted. Its dashed 15 min
 extension displays the prediction separately; the joins do not extrapolate.
+The optional cyan curve shows the analytical derivative in °C/h of each
+selected local phase model between that phase's observed measurements. It
+does not extend into the future, does not span phase boundaries, and does not
+feed the ETA. A phase needs at least four measurements over 15 min to draw
+its rate; missing intervals are shown dashed to distinguish inferred values
+from measured data. The right axis scales independently of core temperature.
 Ranges and confidence labels are engineering heuristics, not calibrated
 statistical confidence intervals. A new phase needs repeated supporting
 measurements. Manually check an unstable or stale ETA with a fresh probe

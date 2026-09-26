@@ -57,6 +57,7 @@
     .quality-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--muted)}
     .section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.section-title{font-size:16px;font-weight:760}.section-action{font-size:13px;color:var(--blue);background:transparent;padding:7px 0}
     .chart-wrap{position:relative;width:100%;height:270px}.chart-wrap canvas{width:100%;height:100%;display:block;touch-action:none}
+    .chart-legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:7px;font-size:11px;color:var(--muted)}.chart-legend .temp-key::before,.chart-legend .velocity-key::before{content:'';display:inline-block;width:15px;height:3px;border-radius:3px;vertical-align:middle;margin-right:6px;background:var(--blue)}.chart-legend .velocity-key::before{background:var(--cyan)}.velocity-toggle{background:var(--surface2);border:1px solid var(--line);border-radius:99px;padding:7px 10px;font-size:11px;color:var(--muted);cursor:pointer}.velocity-toggle.active{color:var(--cyan);border-color:rgba(100,210,255,.5);background:rgba(100,210,255,.10)}.chart-note{font-size:11px;color:var(--muted);line-height:1.35;margin-top:7px}
     .range-row{display:flex;gap:7px;overflow:auto;padding-top:10px}.chip{background:var(--surface2);border:1px solid var(--line);border-radius:99px;padding:8px 12px;font-size:12px;color:var(--muted);white-space:nowrap}.chip.active{background:rgba(10,132,255,.18);border-color:rgba(10,132,255,.45);color:#fff}
     .empty{padding:44px 18px;text-align:center}.empty-icon{font-size:44px;margin-bottom:12px}.empty h2{font-size:24px;margin-bottom:8px}.empty p{color:var(--muted);font-size:14px;line-height:1.45;max-width:430px;margin:0 auto 20px}
     .primary{background:var(--blue);border-radius:16px;padding:14px 18px;font-weight:760;font-size:16px;width:100%}.secondary{background:var(--surface2);border:1px solid var(--line);border-radius:14px;padding:12px 15px;font-weight:650}.danger{background:rgba(255,69,58,.14);color:#ff6961;border:1px solid rgba(255,69,58,.25)}
@@ -79,7 +80,7 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand">CuissonTracker <small>v3.1.1</small></div>
+      <div class="brand">CuissonTracker <small>v3.2.0</small></div>
       <button class="icon-btn" id="historyTopBtn" aria-label="Historique">☰</button>
     </header>
     <main id="main"></main>
@@ -97,15 +98,15 @@
   <div class="toast" id="toast"></div>
   <input id="fileInput" type="file" accept="application/json,.json" hidden>
 
-<script src="analysis.js?v=4.1.1"></script>
+<script src="analysis.js?v=4.2.0"></script>
 <script>
 'use strict';
 
-// CuissonTracker Web v3.1.1 — local phase analysis v4.1.1
+// CuissonTracker Web v3.2.0 — local phase analysis v4.2.0
 // Data schema kept compatible with the Scriptable schema v5.
 
-const APP_VERSION = '3.1.1';
-const ANALYSIS_VERSION = 'web-4.1.1';
+const APP_VERSION = '3.2.0';
+const ANALYSIS_VERSION = 'web-4.2.0';
 const SCHEMA_VERSION = 5;
 const STORAGE_KEY = 'cuissonTracker.state.v5';
 const MIN_TEMP_C = -20;
@@ -127,6 +128,7 @@ const PHASE_BOUNDARY_TYPES = new Set(['wrapped','unwrapped','setpointChanged','a
 
 let state = loadState();
 let chartRangeMinutes = 180;
+let velocityVisible = true;
 let chartView = null;
 let toastTimer = null;
 
@@ -224,7 +226,7 @@ function render(){
       <div class="stat"><div class="stat-label">Qualité</div><div class="stat-value"><span class="quality-dot" style="background:${qualityColor(a.quality.key)}"></span>${a.quality.label}</div><div class="stat-detail">${escapeHtml(a.quality.detail)}</div></div>
     </section>
     ${a.warnings.length?`<section class="card warning" role="status">⚠ ${escapeHtml(a.warnings.join(' · '))}</section>`:''}
-    <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-wrap"><canvas id="chart"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div></section>
+    <section class="card"><div class="section-head"><div class="section-title">Courbe</div><button class="section-action" onclick="openMeasurements()">Mesures</button></div><div class="chart-legend"><span class="temp-key">Température</span><button id="velocityToggle" type="button" class="velocity-toggle ${velocityVisible?'active':''}" aria-pressed="${velocityVisible}" onclick="toggleVelocity()"><span class="velocity-key">Vitesse °C/h</span></button></div><div class="chart-wrap"><canvas id="chart" role="img" aria-label="Température du cœur et vitesse modélisée sur les phases de cuisson"></canvas></div><div class="range-row">${[['1 h',60],['3 h',180],['6 h',360],['Tout',0]].map(([l,v])=>`<button class="chip ${chartRangeMinutes===v?'active':''}" onclick="setChartRange(${v})">${l}</button>`).join('')}</div><div class="chart-note" id="velocityNote"></div></section>
     <section class="card analysis-details"><details><summary>Détails de l’analyse</summary>${analysisDetailsHtml(a)}</details></section>
     <section class="card"><div class="section-head"><div class="section-title">Dernières mesures</div><button class="section-action" onclick="openMeasurements()">Tout voir</button></div>${recentMeasurementsHtml(c)}</section>`;
   requestAnimationFrame(()=>drawChart(c,a));
@@ -235,13 +237,18 @@ function analysisDetailsHtml(a){return `<div>${a.phases.length} phase(s) · rég
 function recentMeasurementsHtml(c){const ms=[...c.measurements].slice(-5).reverse();if(!ms.length)return `<div class="small">Aucune mesure pour le moment.</div>`;return `<div class="measure-list">${ms.map((m)=>`<div class="measure-item"><div class="measure-time">${fmtClock(new Date(m.timestamp))}</div><div><div class="measure-temp">${fmtTemp(m.temperature)} °C</div>${m.comment?`<div class="small">${escapeHtml(m.comment)}</div>`:''}</div><button class="mini-btn" onclick="editMeasurementByTimestamp('${encodeURIComponent(m.timestamp)}')">Modifier</button></div>`).join('')}</div>`;}
 
 function drawChart(c,a){
-  const canvas=document.getElementById('chart');if(!canvas)return;const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);const w=rect.width,h=rect.height,ml=42,mr=10,mt=12,mb=30,pw=w-ml-mr,ph=h-mt-mb;ctx.clearRect(0,0,w,h);
+  const canvas=document.getElementById('chart');if(!canvas)return;const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);const w=rect.width,h=rect.height,ml=42,mb=30;let mt=12,ph=h-mt-mb;ctx.clearRect(0,0,w,h);
   const pts=a.all;if(!pts.length){ctx.fillStyle='#8e8e93';ctx.font='13px -apple-system';ctx.textAlign='center';ctx.fillText('Ajoute une mesure pour afficher la courbe',w/2,h/2);return;}
   const lastTime=pts.at(-1).timeMs,end=lastTime+(Number.isFinite(a.projection)?15*60000:0);let start=chartRangeMinutes?lastTime-chartRangeMinutes*60000:Math.min(new Date(c.startTime).getTime(),pts[0].timeMs);const visible=pts.filter(p=>p.timeMs>=start);if(visible.length===1)start=Math.min(start,visible[0].timeMs-30*60000);
+  const rateSegments=velocityVisible?TemperatureAnalysis.rateCurve(a.phases,a.acq).filter(s=>s.samples.at(-1).timeMs>=start&&s.samples[0].timeMs<=end):[];
+  const rateValues=rateSegments.flatMap(s=>s.samples.map(p=>p.rateCPerHour));const hasRates=rateValues.length>0;if(hasRates){mt=22;ph=h-mt-mb;}
+  const mr=hasRates?49:10,pw=w-ml-mr;
+  const note=document.getElementById('velocityNote');if(note)note.textContent=!velocityVisible?'':hasRates?'Vitesse déduite des phases · pointillés : intervalle sans mesure':'Vitesse disponible après 4 mesures sur au moins 15 min dans une phase.';
   // The oven setpoint is an event/context variable, not a core temperature: never let it flatten the measured curve.
   const temps=visible.map(p=>p.temperature).concat([Number(c.targetTemperature),a.projection]).filter(Number.isFinite);let ymin=Math.min(...temps),ymax=Math.max(...temps);let pad=Math.max(4,(ymax-ymin)*.14);ymin=Math.floor((ymin-pad)/5)*5;ymax=Math.ceil((ymax+pad)/5)*5;if(ymax-ymin<15)ymax=ymin+15;
   const mx=t=>ml+(t-start)/(end-start||1)*pw,my=v=>mt+(ymax-v)/(ymax-ymin)*ph;
   ctx.strokeStyle='rgba(255,255,255,.10)';ctx.lineWidth=1;ctx.fillStyle='#8e8e93';ctx.font='11px -apple-system';ctx.textAlign='right';ctx.textBaseline='middle';for(let i=0;i<=4;i++){const y=mt+ph*i/4,val=ymax-(ymax-ymin)*i/4;ctx.beginPath();ctx.moveTo(ml,y);ctx.lineTo(w-mr,y);ctx.stroke();ctx.fillText(`${Math.round(val)}°`,ml-6,y);}
+  let rmin=0,rmax=0,ry;if(hasRates){rmin=Math.min(0,...rateValues);rmax=Math.max(0,...rateValues);const span=Math.max(1,rmax-rmin);rmin=Math.floor((rmin-span*.08)/2)*2;rmax=Math.ceil((rmax+span*.08)/2)*2;ry=v=>mt+(rmax-v)/(rmax-rmin)*ph;ctx.fillStyle='#64d2ff';ctx.textAlign='left';for(let i=0;i<=4;i++){const y=mt+ph*i/4;ctx.fillText(fmtNum(rmax-(rmax-rmin)*i/4,1),w-mr+5,y);}ctx.textAlign='right';ctx.fillText('°C/h',w-2,10);}
   ctx.textAlign='center';ctx.textBaseline='top';for(let i=0;i<=3;i++){const t=start+(end-start)*i/3,x=mx(t);ctx.fillText(fmtClock(new Date(t)),x,h-mb+8);}
   const target=Number(c.targetTemperature);if(Number.isFinite(target)){ctx.save();ctx.setLineDash([6,5]);ctx.strokeStyle='#ff9f0a';ctx.beginPath();ctx.moveTo(ml,my(target));ctx.lineTo(w-mr,my(target));ctx.stroke();ctx.restore();}
   const sp=a.setpoint;if(Number.isFinite(sp)&&sp>=ymin&&sp<=ymax){ctx.save();ctx.setLineDash([3,5]);ctx.strokeStyle='rgba(100,210,255,.6)';ctx.beginPath();ctx.moveTo(ml,my(sp));ctx.lineTo(w-mr,my(sp));ctx.stroke();ctx.restore();}
@@ -250,9 +257,11 @@ function drawChart(c,a){
   ctx.strokeStyle='#0a84ff';ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.lineCap='round';ctx.beginPath();visible.forEach((p,i)=>{const x=mx(p.timeMs),y=my(p.temperature);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();ctx.fillStyle='#f5f5f7';for(const p of visible){ctx.beginPath();ctx.arc(mx(p.timeMs),my(p.temperature),3.2,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#0a84ff';ctx.lineWidth=2;ctx.stroke();}
   const active=a.activePhase?.points.filter(p=>p.timeMs>=start)||[];if(active.length>1){ctx.strokeStyle='#30d158';ctx.lineWidth=2.5;ctx.beginPath();active.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),my(p.temperature)):ctx.moveTo(mx(p.timeMs),my(p.temperature)));ctx.stroke();}
   if(Number.isFinite(a.projection)){ctx.save();ctx.setLineDash([4,5]);ctx.strokeStyle='#30d158';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(mx(lastTime),my(pts.at(-1).temperature));ctx.lineTo(mx(lastTime+15*60000),my(a.projection));ctx.stroke();ctx.restore();}
-  chartView={start,end,ymin,ymax};
+  if(hasRates){ctx.save();ctx.beginPath();ctx.rect(ml,mt,pw,ph);ctx.clip();ctx.strokeStyle='#64d2ff';ctx.lineWidth=2;for(const segment of rateSegments){ctx.beginPath();ctx.setLineDash(segment.gap?[3,5]:[]);segment.samples.forEach((p,i)=>i?ctx.lineTo(mx(p.timeMs),ry(p.rateCPerHour)):ctx.moveTo(mx(p.timeMs),ry(p.rateCPerHour)));ctx.stroke();}ctx.setLineDash([]);const last=rateSegments.at(-1).samples.at(-1);if(last.timeMs===lastTime){ctx.fillStyle='#64d2ff';ctx.beginPath();ctx.arc(mx(last.timeMs),ry(last.rateCPerHour),3,0,Math.PI*2);ctx.fill();}ctx.restore();}
+  chartView={start,end,ymin,ymax,rateRange:hasRates?[rmin,rmax]:null};
 }
 function setChartRange(v){chartRangeMinutes=v;render();}
+function toggleVelocity(){velocityVisible=!velocityVisible;const button=document.getElementById('velocityToggle');if(button){button.classList.toggle('active',velocityVisible);button.setAttribute('aria-pressed',String(velocityVisible));}if(state.activeCooking)drawChart(state.activeCooking,analyzeCooking(state.activeCooking));}
 
 function modalHtml(title,body,extra=''){return `<div class="handle"></div><div class="sheet-head"><div class="sheet-title">${title}</div><button class="close" onclick="closeModal()">×</button></div>${body}${extra}`;}
 function openModal(html){document.getElementById('sheet').innerHTML=html;document.getElementById('modal').classList.add('open');setTimeout(()=>document.querySelector('#sheet input[autofocus]')?.focus(),80);}

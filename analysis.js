@@ -1,4 +1,4 @@
-/* CuissonTracker analysis v4.1.1. Times are milliseconds, rates are °C/h.
+/* CuissonTracker analysis v4.2.0. Times are milliseconds, rates are °C/h.
  * This module has no DOM or storage dependency and also runs in Node tests.
  * @typedef {{timeMs:number,temperature:number,index:number,timestamp:string}} Point
  * @typedef {'linear'|'quadratic'|'logarithmic'|'exponential'} ModelFamily
@@ -61,6 +61,27 @@
     if(model.family==='quadratic')return p.b+2*p.c*x;
     if(model.family==='logarithmic')return p.b/(x+p.c);
     return p.A*p.k*Math.exp(-p.k*x);
+  }
+  // Historical display only: evaluate the selected phase law between its measured
+  // endpoints. Never infer the rate from adjacent temperature differences and
+  // never extend this curve beyond the last observation.
+  function rateCurve(phases,acq){
+    const gaps=new Set((acq?.gaps||[]).map(g=>g.beforeIndex)),segments=[];
+    for(let phaseIndex=0;phaseIndex<phases.length;phaseIndex++){
+      const phase=phases[phaseIndex],points=phase.points,model=phase.model;
+      if(!model||points.length<4||points.at(-1).timeMs-points[0].timeMs<15*M)continue;
+      for(let i=1;i<points.length;i++){
+        const first=points[i-1].timeMs,last=points[i].timeMs;
+        if(!(last>first))continue;
+        const steps=Math.min(20,Math.max(2,Math.ceil((last-first)/(3*M))));
+        const samples=Array.from({length:steps+1},(_,j)=>{
+          const timeMs=first+(last-first)*j/steps;
+          return {timeMs,rateCPerHour:derivative(model,(timeMs-model.originMs)/H)};
+        });
+        if(samples.every(p=>finite(p.rateCPerHour)))segments.push({phaseIndex,gap:gaps.has(phase.startIndex+i),samples});
+      }
+    }
+    return segments;
   }
   function rawFit(points,family){
     const n=points.length,min={linear:2,quadratic:6,logarithmic:7,exponential:7}[family];
@@ -232,7 +253,7 @@
     const quality={key,label,detail:`${activePhase.points.length} mesures dans le régime actif${p.warnings.length?' · '+p.warnings[0]:''}.`};
     return {all,acq,phases,activePhase,...p,quality};
   }
-  const api={prepare,acquisition,rawFit,candidatesFor,select,detectPhases,evaluate,derivative,crossHours,analyze};
+  const api={prepare,acquisition,rawFit,candidatesFor,select,detectPhases,evaluate,derivative,rateCurve,crossHours,analyze};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.TemperatureAnalysis=api;
 })(typeof window!=='undefined'?window:globalThis);
